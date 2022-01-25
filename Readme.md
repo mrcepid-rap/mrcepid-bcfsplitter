@@ -6,7 +6,17 @@ https://documentation.dnanexus.com/.
 
 ### Table of Contents
 
-
+- [Introduction](#introduction)
+    * [Background](#background)
+    * [Dependencies](#dependencies)
+        + [Docker](#docker)
+        + [Resource Files](#resource-files)
+- [Methodology](#methodology)
+- [Running on DNANexus](#running-on-dnanexus)
+    * [Inputs](#inputs)
+    * [Outputs](#outputs)
+    * [Command line example](#command-line-example)
+        + [Batch Running](#batch-running)
 
 ## Introduction
 
