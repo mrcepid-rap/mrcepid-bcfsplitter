@@ -1,4 +1,4 @@
-# CollapseVariants (DNAnexus Platform App)
+# BCFSplitter (DNAnexus Platform App)
 
 This is the source code for an app that runs on the DNAnexus Platform.
 For more information about how to run or modify it, see
@@ -6,25 +6,12 @@ https://documentation.dnanexus.com/.
 
 ### Table of Contents
 
-- [Introduction](#introduction)
-    * [Background](#background)
-    * [Dependencies](#dependencies)
-        + [Docker](#docker)
-        + [Resource Files](#resource-files)
-- [Methodology](#methodology)
-    * [1. Filtering With BCFTools Filtering Expressions](#1-filtering-with-bcftools-filtering-expressions)
-    * [2. Generating Outputs](#2-generating-outputs)
-- [Running on DNANexus](#running-on-dnanexus)
-    * [Inputs](#inputs)
-    * [Outputs](#outputs)
-    * [Command line example](#command-line-example)
-        + [Batch Running](#batch-running)
+
 
 ## Introduction
 
-This applet generates raw data necessary to perform rare variant burden testing using [bcftools](https://samtools.github.io/bcftools/bcftools.html)
-or [plink2](https://www.cog-genomics.org/plink/2.0/). Please see these two tool's respective documentation for more
-information on how individual commands used in this applet work.
+This applet splits raw vcf.gz files provided by the UKBiobank platform into more manageable chunks for downstream 
+processing.
 
 This README makes use of DNANexus file and project naming conventions. Where applicable, an object available on the DNANexus
 platform has a hash ID like:
@@ -42,22 +29,10 @@ dx describe file-1234567890ABCDEFGHIJKLMN
 
 ### Background
 
-Downstream of this applet, we have implemented four tools / methods for rare variant burden testing:
-
-* [BOLT](https://alkesgroup.broadinstitute.org/BOLT-LMM/BOLT-LMM_manual.html)
-* [SAIGE-GENE](https://github.com/weizhouUMICH/SAIGE/wiki/Genetic-association-tests-using-SAIGE)
-* [STAAR](https://github.com/xihaoli/STAAR)
-* GLMs – vanilla linear/logistic models implemented with python's [statsmodels module](https://www.statsmodels.org/stable/index.html)
-
-These four tools / methods require very different input files to run. The purpose of this applet is to generate inputs 
-that are compatible with each of these tools input requirements. This tool is part (1) of a two-step process (in bold):
-
-1. **Generate initial files from each VCF filtered/annotated by [mrcepid-filterbcf](https://github.com/mrcepid-rap/mrcepid-filterbcf) 
-   and [mrcepid-annotatecadd](https://github.com/mrcepid-rap/mrcepid-annotatecadd)**
-2. Merge these resulting files into a single set of inputs for the four tools that we have implemented 
-
-For more information on the format of these files, please see the [mrcepid-runassociationtesting](https://github.com/mrcepid-rap/mrcepid-runassociationtesting)
-documentation.
+UKBiobank provides a total of 977 individual .vcf.gz files (located at `Bulk/Exome sequences/Population level exome OQFE variants, pVCF format - interim 450k release/*.vcf.gz`).
+This is the same number as for the 200k release despite the sample size increased by 2.5x. As such, pipelines designed to
+work on the 200k data no longer work as efficiently. As such, we wrote this tool to split provided vcf.gz files into
+smaller chunks.
 
 ### Dependencies
 
@@ -79,7 +54,6 @@ are:
 
 * [htslib and samtools](http://www.htslib.org/)
 * [bcftools](https://samtools.github.io/bcftools/bcftools.html)
-* [plink2](https://www.cog-genomics.org/plink/2.0/)
 
 This list is not exhaustive and does not include dependencies of dependencies and software needed
 to acquire other resources (e.g. wget). See the referenced Dockerfile for more information.
@@ -90,70 +64,82 @@ This applet does not have any external dependencies.
 
 ## Methodology
 
-This applet is step 3 (mrc-collapsevariants) of the rare variant testing pipeline developed by Eugene Gardner for the UKBiobank
+This applet is step 1 (mrc-splitbcf) of the rare variant testing pipeline developed by Eugene Gardner for the UKBiobank
 RAP at the MRC Epidemiology Unit:
 
 ![](https://github.com/mrcepid-rap/.github/blob/main/images/RAPPipeline.png)
 
-This applet has two major steps:
+This applet has three major steps:
 
-1. Select variants from a filtered and annotated VCF file using a BCF tools filtering expression.
-2. Generate various output files in varying formats that can be merged later as part of 
-   [mrcepid-mergecollapsevariants](https://github.com/mrcepid-rap/mrcepid-mergecollapsevariants).
+1. Generate a list of all variants by chromosome/coordinate in a single vcf file
+2. Split this list into smaller chunks (~5000 variants each)
+3. Extract variants for each of these chunks into a separate file.
 
-For more details please see the commented source code available at `src/mrcepid-collapsevariants.py` of this repository.
+In brief, each vcf file is split into roughly 5000-line chunks. However, a split bcf file can have no fewer than 2500 
+sites and no more than 7500 sites. In practice, this results in most original vcf.gz files being split into between 4-5 
+smaller .bcfs. Note that this is the _ONLY_ part of the pipeline that I have not parallelized. This was because I did 
+this analysis prior to deciding to parallelize all other parts of the codebase.
 
-### 1. Filtering With BCFTools Filtering Expressions
+**BIG Note** There is a small bug in this pipeline that will duplicate a site if both of the following are true:
 
-The user of this applet must provide a filtering expression that is compatible with bcftools filtering expressions. For 
-extensive details and tutorials on how to construct such expressions, please see the [bcftools EXPRESSIONS documentation](https://samtools.github.io/bcftools/bcftools.html#expressions).
-Briefly, one can construct various filtering expressions to generate variants that they want to test during rare variant burden tests.
-These expressions **MUST** be based on INFO fields generated by the annotation and filtering parts of this workflow. For possible
-fields that can be filtered on, please see:
+1. The site has an identical position value to another site in the vcf (i.e. split multiallelics)
+2. The site and it's position duplicate **SPAN** the junction of a bcf split
+    * e.g. if variant 1 of a multiallelic pair is variant no. 5000 and variant 2 is variant no. 5001
 
-https://github.com/mrcepid-rap/mrcepid-annotatecadd#outputs
-
-For possible consequences (PARSED_CSQ) to filter on, please see:
-
-https://github.com/mrcepid-rap/mrcepid-filterbcf#4-parsing-vep-consequences
-
-**Note:** One can also filter based on raw [VEP consequence](https://www.ensembl.org/info/genome/variation/prediction/predicted_data.html#consequences)
-using the "CSQ" field if desired (e.g. stop_gained).
-
-For example, lets say that I want to test the effects of rare (MAF < 1x10<sup>-3</sup>) Protein Truncating Variants (PTVs) 
-on some phenotype. Thus, I could construct a filtering expression like:
-
-`AF<0.001 & PARSED_CSQ="PTV"`
-
-Note that this expression would retain variants that FAILED quality control and did not pass basic PTV QC filters (e.g. 
-[LoFTEE](https://github.com/konradjk/loftee)). So, we could further modify this expression like so:
-
-`FILTER="PASS" & AF<0.001 & LOFTEE="HC" & PARSED_CSQ="PTV"`
-
-* FILTER="PASS" means we only retain variants that passed quality control
-* LOFTEE="HC" retains only PTVs that are LoFTEE high-confidence LoFs
-
-This filtering expression can be increased in complexity to generate a more stringent set of variants:
-
-`FILTER="PASS" & AF<0.001 & LOFTEE="HC" & PARSED_CSQ="PTV" & CADD>25 & gnomAD_AF < 0.001`
-
-And so forth... 
-
-These expressions can be mixed and modified according to user need. In summary, the above expression is run by the applet
-as part of the a command like:
+This bug will result in both variants in the pair being present in both split bcf files. In theory, this could also 
+happen to a 3 variant multiallelic, but I have not encountered such a situation. I account for this error later in the 
+pipeline when I extract variants according to filtering criteria (mrcepid-collapsevariants). This case is also rare. 
+Across the 47 vcf.gz files that cover chromosome 7, this situation happened once. I have since fixed this issue in the 
+resulting VCFs using a custom script. I am leaving this documentation in here for posterity and as a warning in case this
+tool needs to be run again. The rough code for this fix is included below to enable replication:
 
 ```commandline
-bcftools view -i 'FILTER="PASS" & AF<0.001 & LOFTEE="HC" & PARSED_CSQ="PTV" & CADD>25 & gnomAD_AF < 0.001' \ 
-        -Ob -o variants.filtered.bcf variants.vcf.gz
+FIRST=$1
+SECOND=$2
+
+# Download the VCF
+dx download filtered_vcfs/$FIRST.cadd.bcf filtered_vcfs/$SECOND.cadd.bcf
+
+# Get list of sites for each file:
+bcftools query -f "%CHROM\t%POS\t%POS\t%ID\n" $FIRST.cadd.bcf > $FIRST.sites.txt
+bcftools query -f "%CHROM\t%POS\t%POS\t%ID\n" $SECOND.cadd.bcf > $SECOND.sites.txt
+
+# Determine sites to remove:
+bedtools intersect -a $FIRST.sites.txt -b $SECOND.sites.txt | uniq | perl -ane 'chomp $_; print "$F[0]\t$F[1]\t$F[3]\n";' > remove.txt
+
+# Remove from SECOND file:
+# caret character for -T means exclude rather than include
+bcftools view -Ob -o $SECOND.cadd.fixed.bcf -T ^remove.txt $SECOND.cadd.bcf
+
+# Overwrite old file:
+mv $SECOND.cadd.fixed.bcf $SECOND.cadd.bcf
+
+# Regenerate .csi index
+bcftools index $SECOND.cadd.bcf
+
+# Download annotations
+dx download filtered_vcfs/$SECOND.vep.tsv.gz
+dx download filtered_vcfs/$SECOND.vep.tsv.gz.tbi
+
+# Generate list of variants to keep:
+bcftools query -f "%CHROM\t%POS\n" $SECOND.cadd.bcf > keep.txt
+
+# Filter the vep annotation:
+tabix -T keep.txt $SECOND.vep.tsv.gz > $SECOND.vep.fixed.tsv
+bgzip $SECOND.vep.fixed.tsv
+mv $SECOND.vep.fixed.tsv.gz $SECOND.vep.tsv.gz
+tabix -f -s 1 -b 2 -e 2 $SECOND.vep.tsv.gz
+
+# upload back to dna nexus
+dx upload --destination fixed_vcfs/ $SECOND.cadd.bcf*
+dx upload --destination fixed_vcfs/ $SECOND.vep.tsv.gz*
+
+# rm old:
+rm $FIRST.*
+rm $SECOND.*
+rm keep.txt
+rm remove.txt
 ```
-
-The file `variants.filtered.bcf` is used for the next step.
-
-### 2. Generating Outputs
-
-This applet then performs a series of formatting steps to generate various output files that are compatible with the
-different tools listed in [Background](#background). I am not going to go into detail on the format of these files as 
-they are mainly intermediate and not used by any other applets / tools.
 
 ## Running on DNANexus
 
@@ -161,33 +147,18 @@ they are mainly intermediate and not used by any other applets / tools.
 
 |input|description             |
 |---- |------------------------|
-|input_vcf  | Input vcf file from [mrcepid-annotatecadd](https://github.com/mrcepid-rap/mrcepid-filterbcf) to annotate with CADD |
-|filtering_expression | [bcftools](https://samtools.github.io/bcftools/bcftools.html) compatible filtering expression. See [above](#1-filtering-with-bcftools-filtering-expressions) |
-|file_prefix | descriptive file prefix for output name |
-
-**BIG Note:** The value provided to `file_prefix` **MUST** be identical for all VCF files that you wish to merge and test during
-rare variant burden testing.
+|input_vcf  | Raw input vcf.gz file from DNA Nexus |
+|input_index | The accompanying index file for `input_vcf` |
 
 ### Outputs
 
 |output                 | description       |
 |-----------------------|-------------------|
-|output_tarball         |  Output tarball containing filtered and processed variant counts  |
+|output_vcfs            |  All .bcf chunks from the resulting split of `input_vcf` |
 
-output_tarball is named based on the name of the `input_vcf` combined with `file_prefix` like:
+output_vcfs is named based on the name of the `input_vcf` with an additional 'chunk' identifier like:
 
-`ukb23156_c1_b0_v1.norm.filtered.tagged.missingness_filtered.annotated.cadd.PTV.tar.gz`
-
-While I am not going into detail about the format of the files contained in this tar file, I list here the files for 
-record-keeping purposes. All files have a standard prefix identical to that of the tarball with an extra descriptor:
-
-* <prefix>.BOLT.json – BOLT-ready .json file of sample - gene pairs.
-* <prefix>.REGENIE.annotation.txt – Per variant annotation information in tsv format with coordinate and ID
-* <prefix>.REGENIE.pgen – plink pgen format-file of filtered genotypes
-* <prefix>.REGENIE.psam - plink psam format-file of filtered genotypes
-* <prefix>.REGENIE.pvar - plink pvar format-file of filtered genotypes
-* <prefix>.REGENIE.log - log file from creating pgen files
-* <prefix>.STAAR.matrix.txt - STAAR-ready tsv file of sample - variant - genotype sets
+`ukb23156_c1_b0_v1_chunkN.bcf`
 
 ### Command line example
 
@@ -200,21 +171,21 @@ Running this command is fairly straightforward using the DNANexus SDK toolkit. F
 `-iinput_vcf`) one can use a file hash from the VCF output of `mrcepid-annotatecadd`:
 
 ```commandline
-dx run mrcepid-collapsevariants --priority low --destination filtered_vcfs/ -iinput_vcf=file-A12345 \
-        -ifiltering_expression='FILTER="PASS" & AF<0.001 & LOFTEE="HC" & PARSED_CSQ="PTV"' \
-        -ifile_prefix="PTV"
+dx run mrcepid-bcfsplitter --priority low --destination filtered_vcfs/ \ 
+        -iinput_vcf=file-G5712Z0JykJzZFgX4zb185Jj \
+        -iinput_index=file-G57125jJykJgfqPx4qQ49gGk
 ```
 
 Brief I/O information can also be retrieved on the command line:
 
 ```commandline
-dx run mrcepid-collapsevariants --help
+dx run mrcepid-bcfsplitter --help
 ```
 
 I have set a sensible (and tested) default for compute resources on DNANexus that is baked into the json used for building 
-the app (at `dxapp.json`) so setting an instance type is unnecessary. This current default is for a mem1_ssd2_v2_x2 instance
-(2 CPUs, 4 Gb RAM, 50Gb storage). If necessary to adjust compute resources, one can provide a flag like `--instance-type mem1_ssd1_v2_x4`.
+the app (at `dxapp.json`) so setting an instance type is unnecessary. This current default is for a mem1_ssd1_v2_x16 instance
+(16 CPUs, 32 Gb RAM, 400Gb storage). If necessary to adjust compute resources, one can provide a flag like `--instance-type mem1_ssd1_v2_x4`.
 
 #### Batch Running
 
-t.b.d. A fast way of performing filtering for a large number of VCF files
+This tool is not compatible with batch running at this time.
