@@ -10,9 +10,6 @@
 import dxpy
 import subprocess
 import csv
-import json
-import tarfile
-import glob
 
 
 # This function runs a command on an instance, either with or without calling the docker instance we downloaded
@@ -24,7 +21,7 @@ def run_cmd(cmd: str, is_docker: bool = False) -> None:
         # Docker instance named /test/. This allows us to run commands on files stored on the AWS instance within Docker
         cmd = "docker run " \
               "-v /home/dnanexus:/test " \
-              "egardner413/mrcepid-filtering " + cmd
+              "egardner413/mrcepid-burdentesting " + cmd
 
     # Standard python calling external commands protocol
     print(cmd)
@@ -40,72 +37,7 @@ def run_cmd(cmd: str, is_docker: bool = False) -> None:
         raise dxpy.AppError("Failed to run properly...")
 
 
-def split_sites(vcfprefix):
-
-    # Do first iteration to get number of lines
-    sites = csv.DictReader(open("bcf_sites.txt", "r"), delimiter="\t", fieldnames = ["chrom","pos"], quoting = csv.QUOTE_NONE)
-    n_lines = 0
-    for site in sites:
-        n_lines += 1
-    if n_lines % 5000 < 2500:
-        append_last = True
-    else:
-        append_last = False
-
-    # Then do second iteration to write the actual index files:
-    coordinate_writer = open(vcfprefix + ".coordinates.tsv", "w")
-    current_index_num = 1
-    current_start = 0
-    current_end = 0
-    sites = csv.DictReader(open("bcf_sites.txt", "r"), delimiter="\t", fieldnames = ["chrom","pos"], quoting = csv.QUOTE_NONE)
-    file_chunk_names = []
-    current_index = open(vcfprefix + "_chunk" + str(current_index_num), "w")
-    # file_chunk_names.append(vcfprefix + "_chunk" + str(current_index_num))
-    for site in sites:
-        if sites.line_num == 1:
-            current_start = site['pos']
-        elif (sites.line_num - 1) % 5000 == 0:
-            print(sites.line_num)
-            if (n_lines - sites.line_num) < 2500 and append_last is False:
-                coordinate_writer.write("%s\t%s\t%s\t%s\n" % (site['chrom'], current_start, current_end, vcfprefix + "_chunk" + str(current_index_num)))
-                current_index.close()
-                current_index_num += 1
-                current_index = open(vcfprefix + "_chunk" + str(current_index_num), "w")
-                # file_chunk_names.append(vcfprefix + "_chunk" + str(current_index_num))
-                current_start = site['pos']
-            elif (n_lines - sites.line_num) < 2500 and append_last is True:
-                print("Appending remaining lines to end of last chunk...")
-            else:
-                coordinate_writer.write("%s\t%s\t%s\t%s\n" % (site['chrom'], current_start, current_end, vcfprefix + "_chunk" + str(current_index_num)))
-                current_index.close()
-                current_index_num += 1
-                current_index = open(vcfprefix + "_chunk" + str(current_index_num), "w")
-                # file_chunk_names.append(vcfprefix + "_chunk" + str(current_index_num))
-                current_start = site['pos']
-        current_index.write("%s\t%s\n" % (site['chrom'], site['pos']))
-        current_end = site['pos']
-
-    current_index.close()
-    coordinate_writer.write("%s\t%s\t%s\t%s\n" % (site['chrom'], current_start, current_end, vcfprefix + "_chunk" + str(current_index_num)))
-    coordinate_writer.close()
-
-    return file_chunk_names
-
-
-def split_bcfs(vcfprefix, file_chunk_names):
-
-    current_chunk = 1
-    bcf_files = []
-    for file in file_chunk_names:
-        cmd = "bcftools view --threads 8 -T /test/" + file + " -Ob -o /test/" + vcfprefix + "_chunk" + str(current_chunk) + ".bcf /test/variants.vcf.gz"
-        run_cmd(cmd, True)
-        bcf_files.append(dxpy.upload_local_file(vcfprefix + "_chunk" + str(current_chunk) + ".bcf"))
-        current_chunk += 1
-
-    return bcf_files
-
-@dxpy.entry_point('main')
-def main(input_vcf, input_index):
+def ingest_data(input_vcf: dict, input_index: dict) -> str:
 
     # Download the VCF file & index chunk to the instance
     vcf = dxpy.DXFile(input_vcf)
@@ -118,21 +50,106 @@ def main(input_vcf, input_index):
 
     # Bring a prepared docker image into our environment so that we can run commands we need:
     # The Dockerfile to build this image is located at resources/Dockerfile
-    cmd = "docker pull egardner413/mrcepid-filtering:latest"
+    cmd = "docker pull egardner413/mrcepid-burdentesting:latest"
     run_cmd(cmd)
 
-    # Do splitting of the target VCF:
-    # First generate a list of all variants in the file
+    return vcfprefix
+
+
+# Just generates a txt file of all variants in the provided BCF file
+def generate_variant_list() -> None:
+
     cmd = "bcftools query -f \"%CHROM\\t%POS\\n\" -o /test/bcf_sites.txt /test/variants.vcf.gz"
     run_cmd(cmd, True)
-    # Generate reasonable sites:
+
+
+# Essentially is a re-code of the *NIX split command with a few special tweaks to:
+# 1. Ensure that BCF files smaller than 2,500 variants do not get created
+# 2. Make sure that variants do not get duplicated at the beginning/end of VCFs due to poor handling of MNVs
+def split_sites(vcfprefix: str) -> list:
+    # Do first iteration to get number of lines – this defines how many files we will write
+    sites = csv.DictReader(open("bcf_sites.txt", "r"), delimiter="\t", fieldnames = ["chrom","pos"], quoting = csv.QUOTE_NONE)
+    n_lines = 0
+    for site in sites:
+        n_lines += 1
+    if n_lines % 5000 < 2500:
+        append_last = True
+    else:
+        append_last = False
+    # Then do second iteration to write the actual index files:
+    # These variables are to control iteration parameters
+    current_index_num = 1
+    current_start = 0
+    current_end = 0
+    write_next_variant = True
+    # Store the actual names of each chunk so we can do the actual bcftools extraction later
+    file_chunk_names = [vcfprefix + "_chunk" + str(current_index_num)]
+    # Collection of files that store different information for i/o
+    sites = csv.DictReader(open("bcf_sites.txt", "r"),  # 'sites' is the reader of ALL variants in the BCF
+                           delimiter="\t",
+                           fieldnames=["chrom", "pos"],
+                           quoting=csv.QUOTE_NONE)
+    current_index = open(vcfprefix + "_chunk" + str(current_index_num), "w")  # Stores the actual variants to be extracted for each chunk
+    # Do the iteration itself
+    for site in sites:
+        if sites.line_num == 1:
+            current_start = site['pos']
+        elif (sites.line_num - 1) % 5000 == 0:
+            print(sites.line_num)
+            if (n_lines - sites.line_num) < 2500 and append_last is True:
+                print("Appending remaining lines to end of last chunk...")
+            else:
+                current_index.close()
+                current_index_num += 1
+                current_index = open(vcfprefix + "_chunk" + str(current_index_num), "w")
+                file_chunk_names.append(vcfprefix + "_chunk" + str(current_index_num))
+                if current_end == site['pos']:
+                    write_next_variant = False
+                current_start = site['pos']
+        # Allows me to control writing of variants
+        if write_next_variant:
+            current_index.write("%s\t%s\n" % (site['chrom'], site['pos']))
+            current_end = site['pos']
+        else:
+            write_next_variant = True
+    current_index.close()
+    return file_chunk_names
+
+
+# Just a wrapper around bcftools that generates the actual chunks for each VCF file
+def split_bcfs(vcfprefix: str, file_chunk_names: list) -> list:
+
+    current_chunk = 1
+    bcf_files = []
+    for file in file_chunk_names:
+        cmd = "bcftools view --threads 8 -T /test/" + file + " -Ob -o /test/" + vcfprefix + "_chunk" + str(current_chunk) + ".bcf /test/variants.vcf.gz"
+        run_cmd(cmd, True)
+        bcf_files.append(dxpy.upload_local_file(vcfprefix + "_chunk" + str(current_chunk) + ".bcf"))
+        current_chunk += 1
+
+    return bcf_files
+
+
+@dxpy.entry_point('main')
+def main(input_vcf: dict, input_index: dict) -> dict:
+
+    # Ingest requisite data for processing:
+    vcfprefix = ingest_data(input_vcf, input_index)
+
+    # Do actual splitting of the target VCF:
+    # 1. generate a list of all variants in the file
+    generate_variant_list()
+
+    # 2. Generate reasonable sized (5k) lists of variants:
     file_chunk_names = split_sites(vcfprefix)
-    # And split the files into chunks:
+
+    # 3. And actually split the files into chunks:
     bcf_files = split_bcfs(vcfprefix, file_chunk_names)
 
     # Set output
     output = {"output_vcfs": [dxpy.dxlink(item) for item in bcf_files]}
 
     return output
+
 
 dxpy.run()
