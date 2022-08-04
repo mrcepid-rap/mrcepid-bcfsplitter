@@ -31,7 +31,7 @@ platform has a hash ID like:
 
 Information about files and projects can be queried using the `dx describe` tool native to the DNANexus SDK:
 
-```commandline
+```shell
 dx describe file-1234567890ABCDEFGHIJKLMN
 ```
 
@@ -39,9 +39,9 @@ dx describe file-1234567890ABCDEFGHIJKLMN
 
 ### Background
 
-UKBiobank provides a total of 977 individual .vcf.gz files (located at `Bulk/Exome sequences/Population level exome OQFE variants, pVCF format - interim 450k release/*.vcf.gz`).
-This is the same number as for the 200k release despite the sample size increased by 2.5x. As such, pipelines designed to
-work on the 200k data no longer work as efficiently. As such, we wrote this tool to split provided vcf.gz files into
+UKBiobank provides a total of 977 individual .vcf.gz files (located at `Bulk/Exome sequences/Population level exome OQFE variants, pVCF format - final release/*.vcf.gz`).
+This is the same number as for the 200k release despite the sample size increased by ~2.5x. As such, pipelines designed to
+work on the 200k data no longer work as efficiently; we wrote this tool to split provided vcf.gz files into
 smaller chunks.
 
 ### Dependencies
@@ -51,7 +51,7 @@ smaller chunks.
 This applet uses [Docker](https://www.docker.com/) to supply dependencies to the underlying AWS instance
 launched by DNANexus. The Dockerfile used to build dependencies is available as part of the MRCEpid organisation at:
 
-https://github.com/mrcepid-rap/dockerimages/blob/main/filterbcf.Dockerfile
+https://github.com/mrcepid-rap/dockerimages/blob/main/burdentesting.Dockerfile
 
 This Docker image is built off of the primary 20.04 Ubuntu distribution available via [dockerhub](https://hub.docker.com/layers/ubuntu/library/ubuntu/20.04/images/sha256-644e9b64bee38964c4d39b8f9f241b894c00d71a932b5a20e1e8ee8e06ca0fbd?context=explore).
 This image is very light-weight and only provides basic OS installation. Other basic software (e.g. wget, make, and gcc) need
@@ -75,7 +75,7 @@ This applet does not have any external dependencies.
 ## Methodology
 
 This applet is step 1 (mrc-splitbcf) of the rare variant testing pipeline developed by Eugene Gardner for the UKBiobank
-RAP at the MRC Epidemiology Unit:
+RAP:
 
 ![](https://github.com/mrcepid-rap/.github/blob/main/images/RAPPipeline.png)
 
@@ -90,85 +90,45 @@ sites and no more than 7500 sites. In practice, this results in most original vc
 smaller .bcfs. Note that this is the _ONLY_ part of the pipeline that I have not parallelized. This was because I did 
 this analysis prior to deciding to parallelize all other parts of the codebase.
 
-**BIG Note** There is a small bug in this pipeline that will duplicate a site if both of the following are true:
+**BIG Note** There is a fix implemented in this pipeline that solves a previous bug that would duplicate a site if both
+of the following were true:
 
 1. The site has an identical position value to another site in the vcf (i.e. split multiallelics)
 2. The site and it's position duplicate **SPAN** the junction of a bcf split
     * e.g. if variant 1 of a multiallelic pair is variant no. 5000 and variant 2 is variant no. 5001
 
-This bug will result in both variants in the pair being present in both split bcf files. In theory, this could also 
-happen to a 3 variant multiallelic, but I have not encountered such a situation. I account for this error later in the 
-pipeline when I extract variants according to filtering criteria (mrcepid-collapsevariants). This case is also rare. 
-Across the 47 vcf.gz files that cover chromosome 7, this situation happened once. I have since fixed this issue in the 
-resulting VCFs using a custom script. I am leaving this documentation in here for posterity and as a warning in case this
-tool needs to be run again. The rough code for this fix is included below to enable replication:
-
-```commandline
-FIRST=$1
-SECOND=$2
-
-# Download the VCF
-dx download filtered_vcfs/$FIRST.cadd.bcf filtered_vcfs/$SECOND.cadd.bcf
-
-# Get list of sites for each file:
-bcftools query -f "%CHROM\t%POS\t%POS\t%ID\n" $FIRST.cadd.bcf > $FIRST.sites.txt
-bcftools query -f "%CHROM\t%POS\t%POS\t%ID\n" $SECOND.cadd.bcf > $SECOND.sites.txt
-
-# Determine sites to remove:
-bedtools intersect -a $FIRST.sites.txt -b $SECOND.sites.txt | uniq | perl -ane 'chomp $_; print "$F[0]\t$F[1]\t$F[3]\n";' > remove.txt
-
-# Remove from SECOND file:
-# caret character for -T means exclude rather than include
-bcftools view -Ob -o $SECOND.cadd.fixed.bcf -T ^remove.txt $SECOND.cadd.bcf
-
-# Overwrite old file:
-mv $SECOND.cadd.fixed.bcf $SECOND.cadd.bcf
-
-# Regenerate .csi index
-bcftools index $SECOND.cadd.bcf
-
-# Download annotations
-dx download filtered_vcfs/$SECOND.vep.tsv.gz
-dx download filtered_vcfs/$SECOND.vep.tsv.gz.tbi
-
-# Generate list of variants to keep:
-bcftools query -f "%CHROM\t%POS\n" $SECOND.cadd.bcf > keep.txt
-
-# Filter the vep annotation:
-tabix -T keep.txt $SECOND.vep.tsv.gz > $SECOND.vep.fixed.tsv
-bgzip $SECOND.vep.fixed.tsv
-mv $SECOND.vep.fixed.tsv.gz $SECOND.vep.tsv.gz
-tabix -f -s 1 -b 2 -e 2 $SECOND.vep.tsv.gz
-
-# upload back to dna nexus
-dx upload --destination fixed_vcfs/ $SECOND.cadd.bcf*
-dx upload --destination fixed_vcfs/ $SECOND.vep.tsv.gz*
-
-# rm old:
-rm $FIRST.*
-rm $SECOND.*
-rm keep.txt
-rm remove.txt
-```
+This bug resulted in both variants in the pair being present in both split bcf files. In theory, this could also 
+happen to a 3 variant multiallelic, but I have not encountered such a situation. As noted, I have since fixed this issue 
+in the resulting VCFs using a custom script. I am leaving this documentation in here for posterity and as a warning in 
+case this error is ever encountered again.
 
 ## Running on DNANexus
 
 ### Inputs
 
-|input|description             |
-|---- |------------------------|
-|input_vcf  | Raw input vcf.gz file from DNA Nexus |
-|input_index | The accompanying index file for `input_vcf` |
+| input      | description                                                       |
+|------------|-------------------------------------------------------------------|
+| input_vcfs | List of raw input vcf.gz file(s) and their indices from DNA Nexus |
+
+The format of the input_vcfs file is as follows:
+
+```text
+file-1234567890ABCDE    file-ABCDE1234567890
+```
+
+Where `file-1234567890ABCDE` is the DNANexus file ID for a unprocessed vcf file and `file-ABCDE1234567890` is the 
+DNANexus file ID for the unprocessed vcf file's corresponding index.
 
 ### Outputs
 
-|output                 | description       |
-|-----------------------|-------------------|
-|output_vcfs            |  All .bcf chunks from the resulting split of `input_vcf` |
+| output      | description                                                                  |
+|-------------|------------------------------------------------------------------------------|
+| output_vcfs | All .bcf chunks from the resulting split of all files listed in `input_vcfs` |
 
-output_vcfs is named based on the name of the `input_vcf` with an additional 'chunk' identifier like:
+output_vcfs is named based on the original file name of the vcf in `input_vcfs` with an additional 'chunk' identifier 
+like:
 
-`ukb23156_c1_b0_v1_chunkN.bcf`
+`ukb23157_c1_b0_v1_chunkN.bcf`
 
 ### Command line example
 
@@ -177,24 +137,42 @@ organisational documentation on how to download and build this app on the DNANex
 
 https://github.com/mrcepid-rap
 
-Running this command is fairly straightforward using the DNANexus SDK toolkit. For the input vcf (provided with the flag
-`-iinput_vcf`) one can use a file hash from the VCF output of `mrcepid-annotatecadd`:
+Running this command is fairly straightforward using the DNANexus SDK toolkit. First generate a list of all VCFs to process
+using commands like the following:
 
-```commandline
+```shell
+# 1. get a list of the initial VCF
+dx ls -l 'Bulk/Exome sequences/Population level exome OQFE variants, pVCF format - final release/ukb23157*.vcf.gz' | perl -ane 'chomp $_; if ($F[6] =~ /^\((\S+)\)$/) {$id = $1; $F[5] =~ s/.vcf.gz//; print "$F[5]\t$id\n";}' > bcf_list.txt 
+
+# 2. get a concurrent list of the indicies:
+dx ls -l 'Bulk/Exome sequences/Population level exome OQFE variants, pVCF format - final release/ukb23157*.vcf.gz.tbi' | perl -ane 'chomp $_; if ($F[6] =~ /^\((\S+)\)$/) {$id = $1; $F[5] =~ s/.vcf.gz.tbi//; print "$F[5]\t$id\n";}' > idx_list.txt```
+
+# 3. Match the two lists using a custom script (not included in this repo):
+matcher.pl -file1 bcf_list.txt -file2 idx_list.txt -r | perl -ane 'chomp $_; print "$F[3]\t$F[1]\n";' > bcfsplitter_input.lst
+
+# 4. Split to a manageble per-size job:
+split -l 15 -d ../bcfsplitter_input.lst splitjob_
+
+# 5. Upload to DNAnexus
+dx upload splitjob_* --destination batch_files/
+```
+
+For the input vcf (provided with the flag `-iinput_vcf`) one can use a file hash from one of the above files:
+
+```shell
 dx run mrcepid-bcfsplitter --priority low --destination filtered_vcfs/ \ 
-        -iinput_vcf=file-G5712Z0JykJzZFgX4zb185Jj \
-        -iinput_index=file-G57125jJykJgfqPx4qQ49gGk
+        -iinput_vcfs=file-1234567890ABCDE
 ```
 
 Brief I/O information can also be retrieved on the command line:
 
-```commandline
+```shell
 dx run mrcepid-bcfsplitter --help
 ```
 
 I have set a sensible (and tested) default for compute resources on DNANexus that is baked into the json used for building 
-the app (at `dxapp.json`) so setting an instance type is unnecessary. This current default is for a mem1_ssd1_v2_x16 instance
-(16 CPUs, 32 Gb RAM, 400Gb storage). If necessary to adjust compute resources, one can provide a flag like `--instance-type mem1_ssd1_v2_x4`.
+the app (at `dxapp.json`) so setting an instance type is unnecessary. This current default is for a mem2_ssd1_v2_x64 instance
+(64 CPUs, 256 Gb RAM). If necessary to adjust compute resources, one can provide a flag like `--instance-type mem1_ssd1_v2_x4`.
 
 #### Batch Running
 
