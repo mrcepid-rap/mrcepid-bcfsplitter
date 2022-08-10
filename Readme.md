@@ -7,16 +7,17 @@ https://documentation.dnanexus.com/.
 ### Table of Contents
 
 - [Introduction](#introduction)
-    * [Background](#background)
-    * [Dependencies](#dependencies)
-        + [Docker](#docker)
-        + [Resource Files](#resource-files)
+  * [Background](#background)
+  * [Dependencies](#dependencies)
+    + [Docker](#docker)
+    + [Resource Files](#resource-files)
 - [Methodology](#methodology)
 - [Running on DNANexus](#running-on-dnanexus)
-    * [Inputs](#inputs)
-    * [Outputs](#outputs)
-    * [Command line example](#command-line-example)
-        + [Batch Running](#batch-running)
+  * [Inputs](#inputs)
+  * [Outputs](#outputs)
+  * [Command line example](#command-line-example)
+    + [Batch Running](#batch-running)
+
 
 ## Introduction
 
@@ -173,7 +174,3 @@ dx run mrcepid-bcfsplitter --help
 I have set a sensible (and tested) default for compute resources on DNANexus that is baked into the json used for building 
 the app (at `dxapp.json`) so setting an instance type is unnecessary. This current default is for a mem2_ssd1_v2_x64 instance
 (64 CPUs, 256 Gb RAM). If necessary to adjust compute resources, one can provide a flag like `--instance-type mem1_ssd1_v2_x4`.
-
-#### Batch Running
-
-This tool is not compatible with batch running at this time.
