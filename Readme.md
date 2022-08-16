@@ -78,7 +78,7 @@ This applet does not have any external dependencies.
 This applet is step 1 (mrc-splitbcf) of the rare variant testing pipeline developed by Eugene Gardner for the UKBiobank
 RAP:
 
-![](https://github.com/mrcepid-rap/.github/blob/main/images/RAPPipeline.png)
+![](https://github.com/mrcepid-rap/.github/blob/main/images/RAPPipeline.v3.png)
 
 This applet has three major steps:
 
