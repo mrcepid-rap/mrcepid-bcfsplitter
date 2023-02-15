@@ -109,16 +109,15 @@ case this error is ever encountered again.
 
 | input      | description                                                       |
 |------------|-------------------------------------------------------------------|
-| input_vcfs | List of raw input vcf.gz file(s) and their indices from DNA Nexus |
+| input_vcfs | List of raw input vcf.gz file(s) from DNA Nexus |
 
 The format of the input_vcfs file is as follows:
 
 ```text
-file-1234567890ABCDE    file-ABCDE1234567890
+file-1234567890ABCDE
 ```
 
-Where `file-1234567890ABCDE` is the DNANexus file ID for a unprocessed vcf file and `file-ABCDE1234567890` is the 
-DNANexus file ID for the unprocessed vcf file's corresponding index.
+Where `file-1234567890ABCDE` is the DNANexus file ID for a unprocessed vcf file.
 
 ### Outputs
 
