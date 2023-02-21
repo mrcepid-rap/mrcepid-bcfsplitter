@@ -7,78 +7,29 @@
 # DNAnexus Python Bindings (dxpy) documentation:
 #   http://autodoc.dnanexus.com/bindings/python/current/
 
-import os
 import csv
+import logging
+import re
+
 import dxpy
-import math
-import subprocess
 
+from pathlib import Path
 from typing import List
-from concurrent import futures
-from concurrent.futures import ThreadPoolExecutor
-
-
-# This function runs a command on an instance, either with or without calling the docker instance we downloaded
-# By default, commands are not run via Docker, but can be changed by setting is_docker = True
-from dxpy import DXSearchError
-def run_cmd(cmd: str, is_docker: bool = False, stdout_file: str = None, print_cmd = False) -> None:
-
-    # -v here mounts a local directory on an instance (in this case the home dir) to a directory internal to the
-    # Docker instance named /test/. This allows us to run commands on files stored on the AWS instance within Docker.
-    # This looks slightly different from other versions of this command I have written as I needed to write a custom
-    # R script to run STAAR. That means we have multiple mounts here to enable this code to find the script.
-    if is_docker:
-        cmd = "docker run " \
-              "-v /home/dnanexus:/test " \
-              "-v /usr/bin/:/prog " \
-              "egardner413/mrcepid-burdentesting " + cmd
-
-    if print_cmd:
-        print(cmd)
-
-    # Standard python calling external commands protocol
-    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, stderr = proc.communicate()
-    if stdout_file is not None:
-        with open(stdout_file, 'w') as stdout_writer:
-            stdout_writer.write(stdout.decode('utf-8'))
-        stdout_writer.close()
-
-    # If the command doesn't work, print the error stream and close the AWS instance out with 'dxpy.AppError'
-    if proc.returncode != 0:
-        print("The following cmd failed:")
-        print(cmd)
-        print("STDOUT follows\n")
-        print(stdout.decode('utf-8'))
-        print("STDERR follows\n")
-        print(stderr.decode('utf-8'))
-        raise dxpy.AppError("Failed to run properly...")
-
-
-# Utility function to delete files no longer needed from the AWS instance to save space
-def purge_file(file: str) -> None:
-
-    cmd = "rm " + file
-    run_cmd(cmd)
-
-
-# This is a helper function to upload a local file and then remove it from the instance.
-# This is different than other applets I have written since CADD takes up so much space.
-# I don't want to have to use a massive instance costing lots of £s!
-def generate_linked_dx_file(file: str) -> dxpy.DXFile:
-
-    linked_file = dxpy.upload_local_file(file)
-    purge_file(file)
-    return linked_file
-
 
 # Download required resources for this applet
+from general_utilities.association_resources import run_cmd, generate_linked_dx_file
+from general_utilities.job_management.thread_utility import ThreadUtility
+from general_utilities.mrc_logger import MRCLogger
+
+LOGGER = MRCLogger().get_logger()
+
+
 def ingest_resources() -> None:
 
     # Bring a prepared docker image into our environment so that we can run commands we need:
     # The Dockerfile to build this image is located at resources/Dockerfile
     cmd = "docker pull egardner413/mrcepid-burdentesting:latest"
-    run_cmd(cmd)
+    run_cmd(cmd, is_docker=False)
 
 
 # Helper function that downloads a VCF and it's index, then returns the filename prefix
@@ -90,7 +41,7 @@ def download_vcf(input_vcf: str) -> str:
     # Set a DX file handler for the VCF file & index chunk
     # Both the DXFile class and download_dxfile method require a project_ID as they directly access UKBB bulk data.
     # The method I have used _hopefully_ avoids hardcoding...
-    vcf = dxpy.DXFile(input_vcf,project=project_ID)
+    vcf = dxpy.DXFile(input_vcf, project=project_ID)
 
     # Now we need to find the corresponding tbi index using dxpy search functions
     idx_folder = vcf.describe()['folder']
@@ -112,8 +63,8 @@ def download_vcf(input_vcf: str) -> str:
 # Just generates a txt file of all variants in the provided BCF file
 def generate_variant_list(vcfprefix: str) -> None:
 
-    cmd = "bcftools query -f \"%CHROM\\t%POS\\n\" -o /test/" + vcfprefix + ".bcf_sites.txt /test/" + vcfprefix + ".vcf.gz"
-    run_cmd(cmd, True)
+    cmd = f'bcftools query -f "%CHROM\\t%POS\\n" -o /test/{vcfprefix}.bcf_sites.txt /test/{vcfprefix}.vcf.gz'
+    run_cmd(cmd, is_docker=True, docker_image='egardner413/mrcepid-burdentesting:latest')
 
 
 # Essentially is a re-code of the *NIX split command with a few special tweaks to:
@@ -121,54 +72,62 @@ def generate_variant_list(vcfprefix: str) -> None:
 # 2. Make sure that variants do not get duplicated at the beginning/end of VCFs due to poor handling of MNVs
 def split_sites(vcfprefix: str) -> List[str]:
 
-    # Do first iteration to get number of lines – this defines how many files we will write
-    sites = csv.DictReader(open(vcfprefix + ".bcf_sites.txt", "r"), delimiter="\t", fieldnames = ["chrom","pos"], quoting = csv.QUOTE_NONE)
-    n_lines = 0
-    for site in sites:
-        n_lines += 1
-    if n_lines % 5000 < 2500:
-        append_last = True
-    else:
-        append_last = False
+    # Run wc -l to get number of lines – this defines how many files we will write
+    run_cmd(f'wc -l {vcfprefix}.bcf_sites.txt', is_docker=False, stdout_file=f'wc_{vcfprefix}.txt')
+    with Path(f'wc_{vcfprefix}.txt').open('r') as sites_reader:
+        n_lines = -1
+        for line in sites_reader:
+            line_count_match = re.match('^\s*(\\d+)\s', line)
+            if line_count_match:
+                n_lines = int(line_count_match.group(1))
+        if n_lines == -1:
+            raise ValueError(f'could not determine file length of {vcfprefix}.bcf_sites.txt.')
+
+        if n_lines % 5000 < 2500:
+            append_last = True
+        else:
+            append_last = False
 
     # Then do second iteration to write the actual index files:
-    # These variables are to control iteration parameters
-    current_index_num = 1
-    current_end = 0
-    write_next_variant = True
+    with Path(f'{vcfprefix}.bcf_sites.txt').open('r') as sites_reader:
+        # These variables are to control iteration parameters
+        current_index_num = 1
+        current_end = 0
+        write_next_variant = True
 
-    # Store the actual names of each chunk, so we can do the actual bcftools extraction later
-    file_chunk_names = [vcfprefix + "_chunk" + str(current_index_num)]
+        # Store the actual names of each chunk, so we can do the actual bcftools extraction later
+        file_chunk_names = [f'{vcfprefix}_chunk{current_index_num}']
 
-    # Collection of files that store different information for i/o
-    sites = csv.DictReader(open(vcfprefix + ".bcf_sites.txt", "r"),  # 'sites' is the reader of ALL variants in the BCF
-                           delimiter="\t",
-                           fieldnames=["chrom", "pos"],
-                           quoting=csv.QUOTE_NONE)
-    current_index = open(vcfprefix + "_chunk" + str(current_index_num), "w")  # Stores the actual variants to be extracted for each chunk
+        # Collection of files that store different information for i/o:
+        # 'sites' is the reader of ALL variants in the BCF
+        # 'current_index' stores the actual variants to be extracted for each chunk
+        sites = csv.DictReader(sites_reader,
+                               delimiter='\t',
+                               fieldnames=['chrom', 'pos'],
+                               quoting=csv.QUOTE_NONE)
+        current_index = Path(f'{vcfprefix}_chunk{current_index_num}').open('w')
 
-    # Do the iteration itself
-    for site in sites:
-        if sites.line_num == 1:
-            current_start = site['pos']
-        elif (sites.line_num - 1) % 5000 == 0:
-            if (n_lines - sites.line_num) < 2500 and append_last is True:
-                print("Appending remaining lines to end of last chunk...")
+        # Do the iteration itself
+        for site in sites:
+            if sites.line_num == 1:
+                pass
+            elif (sites.line_num - 1) % 5000 == 0:
+                if (n_lines - sites.line_num) < 2500 and append_last is True:
+                    logging.info("Appending remaining lines to end of last chunk...")
+                else:
+                    current_index.close()
+                    current_index_num += 1
+                    current_index = Path(f'{vcfprefix}_chunk{current_index_num}').open('w')
+                    file_chunk_names.append(f'{vcfprefix}_chunk{current_index_num}')
+                    if current_end == site['pos']:
+                        write_next_variant = False
+            # Allows me to control writing of variants
+            if write_next_variant:
+                current_index.write(f"{site['chrom']}\t{site['pos']}\n")
+                current_end = site['pos']
             else:
-                current_index.close()
-                current_index_num += 1
-                current_index = open(vcfprefix + "_chunk" + str(current_index_num), "w")
-                file_chunk_names.append(vcfprefix + "_chunk" + str(current_index_num))
-                if current_end == site['pos']:
-                    write_next_variant = False
-                current_start = site['pos']
-        # Allows me to control writing of variants
-        if write_next_variant:
-            current_index.write("%s\t%s\n" % (site['chrom'], site['pos']))
-            current_end = site['pos']
-        else:
-            write_next_variant = True
-    current_index.close()
+                write_next_variant = True
+        current_index.close()
 
     return file_chunk_names
 
@@ -179,12 +138,13 @@ def split_bcfs(vcfprefix: str, file_chunk_names: List[str]) -> List[dxpy.DXFile]
     current_chunk = 1
     bcf_files = []
     for file in file_chunk_names:
-        cmd = "bcftools view --threads 4 -T /test/" + file + " -Ob -o /test/" + vcfprefix + "_chunk" + str(current_chunk) + ".bcf /test/" + vcfprefix + ".vcf.gz"
-        run_cmd(cmd, True)
-        bcf_files.append(generate_linked_dx_file(vcfprefix + "_chunk" + str(current_chunk) + ".bcf"))
+        cmd = f'bcftools view --threads 4 -T /test/{file} ' \
+              f'-Ob -o /test/{vcfprefix}_chunk{current_chunk}.bcf ' \
+              f'/test/{vcfprefix}.vcf.gz'
+        run_cmd(cmd, is_docker=True, docker_image='egardner413/mrcepid-burdentesting:latest')
+        bcf_files.append(generate_linked_dx_file(f'{vcfprefix}_chunk{current_chunk}.bcf'))
         current_chunk += 1
-
-    purge_file(vcfprefix + ".vcf.gz")
+    Path(f'{vcfprefix}.vcf.gz').unlink()
     return bcf_files
 
 
@@ -210,44 +170,29 @@ def process_vcf(input_vcf: str) -> List[dxpy.DXFile]:
 @dxpy.entry_point('main')
 def main(input_vcfs: dict) -> dict:
 
-    # Get threads available to this instance
-    threads = os.cpu_count()
-    print('Number of threads available: %i' % threads)
-
     # Ingest requisite resources:
     ingest_resources()
 
     # Run through each VCF file provided and perform filtering.
     # input_vcfs is simple a file list of DNANexus file hashes that I dereference below
     input_vcfs = dxpy.DXFile(input_vcfs)
-    dxpy.download_dxfile(input_vcfs.get_id(), "vcf_list.txt")  # Actually download the file
-    input_vcf_reader = open("vcf_list.txt", 'r')
+    dxpy.download_dxfile(input_vcfs.get_id(), 'vcf_list.txt')  # Actually download the file
 
-    # Now build a thread worker that contains as many threads, divided by 4 that have been requested since each bcftools
-    # instance takes 4 threads and 1 thread for monitoring
-    available_workers = math.floor((threads - 1) / 4)
-    executor = ThreadPoolExecutor(max_workers=available_workers)
+    # Use thread utility to multi-thread this process:
+    thread_utility = ThreadUtility(thread_factor=1,
+                                   error_message='A splitting thread failed',
+                                   incrementor=5)
 
-    # And launch the requested threads
-    future_pool = []
-    for line in input_vcf_reader:
-        input_vcf = line.rstrip()
-
-        # Perform filtering/annotation in a separate thread for each VCF file
-        future_pool.append(executor.submit(process_vcf,
-                                           input_vcf=input_vcf))
-
-    input_vcf_reader.close()
-    print("All threads submitted...")
+    # And launch individual jobs
+    with Path('vcf_list.txt').open('r') as input_vcf_reader:
+        for line in input_vcf_reader:
+            input_vcf = line.rstrip()
+            thread_utility.launch_job(process_vcf,
+                                      input_vcf=input_vcf)
 
     bcf_files = []
-    for future in futures.as_completed(future_pool):
-        try:
-            result = future.result()
-            bcf_files.extend(result)
-        except Exception as err:
-            print("A thread failed...")
-            print(Exception, err)
+    for result in thread_utility:
+        bcf_files.extend(result)
 
     # Set output
     output = {"output_vcfs": [dxpy.dxlink(item) for item in bcf_files]}
