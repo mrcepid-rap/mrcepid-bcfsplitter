@@ -179,7 +179,7 @@ def main(input_vcfs: dict) -> dict:
     dxpy.download_dxfile(input_vcfs.get_id(), 'vcf_list.txt')  # Actually download the file
 
     # Use thread utility to multi-thread this process:
-    thread_utility = ThreadUtility(thread_factor=1,
+    thread_utility = ThreadUtility(thread_factor=4,
                                    error_message='A splitting thread failed',
                                    incrementor=5)
 
