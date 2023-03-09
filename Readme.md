@@ -107,8 +107,8 @@ case this error is ever encountered again.
 
 ### Inputs
 
-| input      | description                                                       |
-|------------|-------------------------------------------------------------------|
+| input      | description                                     |
+|------------|-------------------------------------------------|
 | input_vcfs | List of raw input vcf.gz file(s) from DNA Nexus |
 
 The format of the input_vcfs file is as follows:

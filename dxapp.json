@@ -32,6 +32,7 @@
     "network": [
       "*"
     ],
+    "project": "CONTRIBUTE",
     "allProjects": "VIEW"
   },
   "runSpec": {

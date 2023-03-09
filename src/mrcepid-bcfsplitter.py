@@ -7,16 +7,14 @@
 # DNAnexus Python Bindings (dxpy) documentation:
 #   http://autodoc.dnanexus.com/bindings/python/current/
 
+import re
 import csv
 import logging
-import re
-
 import dxpy
 
 from pathlib import Path
 from typing import List
 
-# Download required resources for this applet
 from general_utilities.association_resources import run_cmd, generate_linked_dx_file
 from general_utilities.job_management.thread_utility import ThreadUtility
 from general_utilities.mrc_logger import MRCLogger
