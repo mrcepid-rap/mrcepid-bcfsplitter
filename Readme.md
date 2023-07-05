@@ -7,6 +7,7 @@ https://documentation.dnanexus.com/.
 ### Table of Contents
 
 - [Introduction](#introduction)
+  * [Changelog](#changelog)
   * [Background](#background)
   * [Dependencies](#dependencies)
     + [Docker](#docker)
@@ -37,6 +38,11 @@ dx describe file-1234567890ABCDEFGHIJKLMN
 ```
 
 **Note:** This README pertains to data included as part of the DNANexus project "MRC - Variant Filtering" (project-G2XK5zjJXk83yZ598Z7BpGPk)
+
+### Changelog
+
+* v1.0.0
+  * Initial numbered release, see git logs for previous changes.
 
 ### Background
 
@@ -75,8 +81,8 @@ This applet does not have any external dependencies.
 
 ## Methodology
 
-This applet is step 1 (mrc-splitbcf) of the rare variant testing pipeline developed by Eugene Gardner for the UKBiobank
-RAP:
+This applet is step 1 (mrcepid-splitbcf) of the rare variant testing pipeline developed by Eugene Gardner for the 
+UKBiobank RAP:
 
 ![](https://github.com/mrcepid-rap/.github/blob/main/images/RAPPipeline.v3.png)
 
@@ -88,8 +94,7 @@ This applet has three major steps:
 
 In brief, each vcf file is split into roughly 5000-line chunks. However, a split bcf file can have no fewer than 2500 
 sites and no more than 7500 sites. In practice, this results in most original vcf.gz files being split into between 4-5 
-smaller .bcfs. Note that this is the _ONLY_ part of the pipeline that I have not parallelized. This was because I did 
-this analysis prior to deciding to parallelize all other parts of the codebase.
+smaller .bcfs.
 
 **BIG Note** There is a fix implemented in this pipeline that solves a previous bug that would duplicate a site if both
 of the following were true:
@@ -114,10 +119,13 @@ case this error is ever encountered again.
 The format of the input_vcfs file is as follows:
 
 ```text
-file-1234567890ABCDE
+file-1234567890ABCDEFGHIJ
+file-ABCDEFGHIJ1234567890
+file-0987654321JIHGFEDCBA
+file-JIHGFEDCBA0987654321
 ```
 
-Where `file-1234567890ABCDE` is the DNANexus file ID for a unprocessed vcf file.
+Where `file-1234567890ABCDEEFGHIJ` is the DNANexus file ID for an unprocessed vcf file.
 
 ### Outputs
 
