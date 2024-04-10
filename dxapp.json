@@ -3,7 +3,7 @@
   "title": "BCFSplitter",
   "summary": "Splits a VCF into a BCF",
   "dxapi": "1.0.0",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "inputSpec": [
     {
       "name": "input_vcfs",
@@ -13,7 +13,41 @@
       "patterns": [
         "*.txt"
       ],
-      "help": "List of input VCF files from mrcepid-filterbcf."
+      "help": "List of input VCF files to split."
+    },
+    {
+      "name": "chunk_size",
+      "label": "number of variants per split output .bcf",
+      "class": "int",
+      "optional": true,
+      "default": 5000,
+      "help": "The number of variants to include per-output BCF produced by this applet. Lines per-file cannot be smaller than [chunk_size] / 2."
+    },
+    {
+      "name": "human_reference",
+      "label": "Human reference genome",
+      "class": "file",
+      "optional": true,
+      "help": "GRCh38 human reference genome",
+      "default": {
+        "$dnanexus_link": {
+          "project": "project-Fx2x0fQJ06KfqV7Y3fFZq1jp",
+          "id": "file-Fx2x270Jx0j17zkb3kbBf6q2"
+        }
+      }
+    },
+    {
+      "name": "human_reference_index",
+      "label": "Human reference genome .fai index",
+      "class": "file",
+      "optional": true,
+      "help": "GRCh38 human reference genome .fai index",
+      "default": {
+        "$dnanexus_link": {
+          "project": "project-Fx2x0fQJ06KfqV7Y3fFZq1jp",
+          "id": "file-Fx2x21QJ06f47gV73kZPjkQQ"
+        }
+      }
     },
     {
       "name": "testing_script",
@@ -42,15 +76,18 @@
         "*.vcf.gz"
       ],
       "help": "Output VCF(s)"
+    },
+    {
+      "name": "run_info",
+      "label": "Split file information",
+      "class": "file",
+      "optional": false,
+      "patterns": [
+        "*.tsv"
+      ],
+      "help": "Information about each processed file"
     }
   ],
-  "access": {
-    "network": [
-      "*"
-    ],
-    "project": "CONTRIBUTE",
-    "allProjects": "VIEW"
-  },
   "runSpec": {
     "timeoutPolicy": {
       "*": {
@@ -62,6 +99,7 @@
     "distribution": "Ubuntu",
     "release": "20.04",
     "version": "0",
+    "assetDepends": [],
     "execDepends": [
       {
         "name": "general_utilities",
@@ -72,11 +110,15 @@
       }
     ]
   },
+  "access": {
+    "network": ["*"],
+    "allProjects": "VIEW"
+  },
   "regionalOptions": {
     "aws:eu-west-2": {
       "systemRequirements": {
         "*": {
-          "instanceType": "mem2_ssd1_v2_x64"
+          "instanceType": "mem3_ssd1_v2_x64"
         }
       }
     }

@@ -112,9 +112,12 @@ case this error is ever encountered again.
 
 ### Inputs
 
-| input      | description                                     |
-|------------|-------------------------------------------------|
-| input_vcfs | List of raw input vcf.gz file(s) from DNA Nexus |
+| input                 | Optional | Default                                                        | description                                                                                                                              |
+|-----------------------|----------|----------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------|
+| input_vcfs            | False    | N/A                                                            | List of raw input vcf.gz file(s) from DNA Nexus                                                                                          |
+| chunk_size            | True     | 5000                                                           | The number of variants to include per-output BCF produced by this applet. Lines per-output file cannot be smaller than [chunk_size] / 2. |
+| human_reference       | True     | project-Fx2x0fQJ06KfqV7Y3fFZq1jp:file-Fx2x270Jx0j17zkb3kbBf6q2 | dxfile / path pointing to the reference genome the provided VCFs are aligned to                                                          |
+| human_reference_index | True     | project-Fx2x0fQJ06KfqV7Y3fFZq1jp:file-Fx2x21QJ06f47gV73kZPjkQQ | dxfile / path pointing to the reference genome index (.fai) the provided VCFs are aligned to                                             |
 
 The format of the input_vcfs file is as follows:
 
@@ -132,11 +135,21 @@ Where `file-1234567890ABCDEEFGHIJ` is the DNANexus file ID for an unprocessed vc
 | output      | description                                                                  |
 |-------------|------------------------------------------------------------------------------|
 | output_vcfs | All .bcf chunks from the resulting split of all files listed in `input_vcfs` |
+| run_info    | Summary statistics for the each VCF file split as part of this process       |
 
 output_vcfs is named based on the original file name of the vcf in `input_vcfs` with an additional 'chunk' identifier 
 like:
 
 `ukb23157_c1_b0_v1_chunkN.bcf`
+
+run_info contains the following columns:
+
+    vcf_prefix: The original file prefix
+    n_orig_sites: Number of sites found in the original file
+    orig_n_alts: Number of alternate alleles found in the original file – this may not equal n_orig_sites if multi-allelics are found
+    n_norm_sites: Number of sites found in the normalised file
+    norm_n_alts: Number of alternate alleles found in the normalised file – this SHOULD equal n_norm_sites
+    alt_diff: The difference between alternate counts. This should be 0 except in the case where large numbers of alternates are found at a single site and the site is stripped from the outputs. Such sites will be reported in the LOG
 
 ### Command line example
 
