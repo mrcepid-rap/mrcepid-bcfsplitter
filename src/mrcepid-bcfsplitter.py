@@ -298,8 +298,10 @@ def main(input_vcfs: dict, chunk_size: int, human_reference: dict, human_referen
                                        incrementor=5)
 
         # And launch individual jobs
+        n_vcfs = 0
         with Path('vcf_list.txt').open('r') as input_vcf_reader:
             for line in input_vcf_reader:
+                n_vcfs += 1
                 input_vcf = line.rstrip()
                 thread_utility.launch_job(process_vcf,
                                           input_vcf=input_vcf,
@@ -307,6 +309,7 @@ def main(input_vcfs: dict, chunk_size: int, human_reference: dict, human_referen
 
         bcf_files = []
         split_info_path = Path('vcf_info.tsv')
+        size_zero_bcf_count = 0
         with split_info_path.open('w') as split_info_file:
             split_info_csv = csv.DictWriter(split_info_file,
                                             fieldnames=['vcf_prefix', 'n_sites', 'vcf_size'],
@@ -316,7 +319,14 @@ def main(input_vcfs: dict, chunk_size: int, human_reference: dict, human_referen
             for result in thread_utility:
                 files, info = result
                 bcf_files.extend(files)
+                if info['n_sites'] == 0:
+                    size_zero_bcf_count += 1
                 split_info_csv.writerow(info)
+
+        LOGGER.info(f'Number of VCFs with 0 sites: {size_zero_bcf_count} '
+                    f'({(size_zero_bcf_count / n_vcfs)*100:0.2f}%)')
+        if size_zero_bcf_count == 0:
+            LOGGER.warning(f'All VCFs in this run were empty. This job will produce 0 output BCF files.')
 
         # Set output
         output = {'output_vcfs': [dxpy.dxlink(item) for item in bcf_files],

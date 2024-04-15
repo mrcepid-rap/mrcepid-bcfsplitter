@@ -71,7 +71,7 @@
       "name": "output_vcfs",
       "label": "Output filtered vcf",
       "class": "array:file",
-      "optional": false,
+      "optional": true,
       "patterns": [
         "*.vcf.gz"
       ],
