@@ -79,7 +79,7 @@ def normalise_and_left_correct(vcf_prefix: str) -> None:
     --old-rec-tag : sets a tag in the resulting bcf that contains the original record – used for IDing multi-allelics
         after splitting
     """
-    cmd = f'bcftools norm --threads 2 -Ob -m - -f /test/reference.fasta ' \
+    cmd = f'bcftools norm --threads 2 -w 500 -Ob -m - -f /test/reference.fasta ' \
           f'--old-rec-tag MA ' \
           f'-o /test/{vcf_prefix}.norm.bcf /test/{vcf_prefix}.vcf.gz'
     CMD_EXEC.run_cmd_on_docker(cmd)
