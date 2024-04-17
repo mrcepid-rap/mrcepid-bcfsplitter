@@ -79,7 +79,7 @@ def normalise_and_left_correct(vcf_prefix: str) -> None:
     --old-rec-tag : sets a tag in the resulting bcf that contains the original record – used for IDing multi-allelics
         after splitting
     """
-    cmd = f'bcftools norm --threads 4 -Ob -m - -f /test/reference.fasta ' \
+    cmd = f'bcftools norm --threads 2 -Ob -m - -f /test/reference.fasta ' \
           f'--old-rec-tag MA ' \
           f'-o /test/{vcf_prefix}.norm.bcf /test/{vcf_prefix}.vcf.gz'
     CMD_EXEC.run_cmd_on_docker(cmd)
@@ -200,7 +200,7 @@ def split_bcfs(vcf_prefix: str, file_chunk_names: List[str]) -> List[dxpy.DXFile
     current_chunk = 1
     bcf_files = []
     for file in file_chunk_names:
-        cmd = f'bcftools view --threads 4 -e "alt==\'*\'" -T /test/{file} ' \
+        cmd = f'bcftools view --threads 2 -e "alt==\'*\'" -T /test/{file} ' \
               f'-Ob -o /test/{vcf_prefix}_chunk{current_chunk}.bcf ' \
               f'/test/{vcf_prefix}.norm.bcf'
         CMD_EXEC.run_cmd_on_docker(cmd)
@@ -293,7 +293,7 @@ def main(input_vcfs: dict, chunk_size: int, human_reference: dict, human_referen
         ingest_human_reference(human_reference, human_reference_index)
 
         # Use thread utility to multi-thread this process:
-        thread_utility = ThreadUtility(thread_factor=4,
+        thread_utility = ThreadUtility(thread_factor=2,
                                        error_message='A splitting thread failed',
                                        incrementor=5)
 
