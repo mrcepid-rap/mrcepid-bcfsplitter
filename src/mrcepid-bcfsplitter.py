@@ -70,23 +70,7 @@ def ingest_human_reference(human_reference: dict, human_reference_index: dict) -
     CMD_EXEC.run_cmd(cmd)
 
 
-def normalise_and_left_correct(vcf_prefix: str) -> None:
-    """A wrapper for BCFtools norm to left-normalise and split all variants
-
-    Generate a normalised bcf file for all downstream processing:
-    -m : splits all multiallelics into separate records
-    -f : provides a reference file so bcftools can left-normalise and check records against the reference genome
-    --old-rec-tag : sets a tag in the resulting bcf that contains the original record – used for IDing multi-allelics
-        after splitting
-    """
-    cmd = f'bcftools norm --threads 2 -w 500 -Ob -m - -f /test/reference.fasta ' \
-          f'--old-rec-tag MA ' \
-          f'-o /test/{vcf_prefix}.norm.bcf /test/{vcf_prefix}.vcf.gz'
-    CMD_EXEC.run_cmd_on_docker(cmd)
-    Path(f'{vcf_prefix}.vcf.gz').unlink()
-
-
-def generate_and_count_variant_list(vcf_file: Path) -> Tuple[Path, int, int]:
+def generate_and_count_variant_list(vcf_file: Path) -> Tuple[Path, int, int, int]:
     """Generates a txt file of all variants in the provided BCF file
 
     This method is a wrapper around bcftools query to print a .tsv file with columns of CHROM and POS. This file can
@@ -98,26 +82,51 @@ def generate_and_count_variant_list(vcf_file: Path) -> Tuple[Path, int, int]:
     :return: A tuple of the generated sites file, the number of variant rows, and the number of alternate alleles
     """
 
-    sites_file = Path(f'{vcf_file}.sites.txt')
+    sites_file = Path(f'{vcf_file}.sites.unfiltered.txt')
+    filtered_sites_file = Path(f'{vcf_file}.sites.txt')
 
     cmd = f'bcftools query -f "%CHROM\\t%POS\\t%REF\\t%ALT\\n" ' \
           f'-o /test/{sites_file} /test/{vcf_file}'
     CMD_EXEC.run_cmd_on_docker(cmd)
 
-    with sites_file.open('r') as sites_reader:
+    with sites_file.open('r') as sites_reader, \
+            filtered_sites_file.open('w') as filtered_sites_writer:
 
         sites_csv = csv.DictReader(sites_reader, delimiter='\t', fieldnames=['CHROM', 'POS', 'REF', 'ALT'])
+        filtered_sites_csv = csv.DictWriter(filtered_sites_writer, delimiter='\t',
+                                            fieldnames=['CHROM', 'POS', 'REF', 'ALT'])
         n_vcf_lines = 0
+        n_final_lines = 0
         n_vcf_alternates = 0
         for variant in sites_csv:
             n_vcf_lines += 1
             n_var_alt = len(variant['ALT'].split(','))
-            n_vcf_alternates += n_var_alt
-            if n_var_alt >= 20:
+            if n_var_alt >= 50:
                 LOGGER.warning(f'Variant {variant["CHROM"]}:{variant["POS"]} from {vcf_file} has excessive number of '
-                               f'alt alleles ({n_var_alt})')
+                               f'alt alleles ({n_var_alt}). Excluding from analysis.)')
+            else:
+                filtered_sites_csv.writerow(variant)
+                n_final_lines += 1
+                n_vcf_alternates += n_var_alt
 
-        return sites_file, n_vcf_lines, n_vcf_alternates
+        return filtered_sites_file, n_vcf_lines, n_final_lines, n_vcf_alternates
+
+
+def normalise_and_left_correct(vcf_prefix: str, sites_file: Path) -> None:
+    """A wrapper for BCFtools norm to left-normalise and split all variants
+
+    Generate a normalised bcf file for all downstream processing:
+    -m : splits all multiallelics into separate records
+    -f : provides a reference file so bcftools can left-normalise and check records against the reference genome
+    --old-rec-tag : sets a tag in the resulting bcf that contains the original record – used for IDing multi-allelics
+        after splitting
+    """
+    cmd = f'bcftools norm --threads 8 -w 100 -Ob -m - -f /test/reference.fasta ' \
+          f'-T {sites_file} ' \
+          f'--old-rec-tag MA ' \
+          f'-o /test/{vcf_prefix}.norm.bcf /test/{vcf_prefix}.vcf.gz'
+    CMD_EXEC.run_cmd_on_docker(cmd)
+    Path(f'{vcf_prefix}.vcf.gz').unlink()
 
 
 def split_sites(vcf_prefix: str, n_lines: int, chunk_size: int) -> List[str]:
@@ -200,7 +209,7 @@ def split_bcfs(vcf_prefix: str, file_chunk_names: List[str]) -> List[dxpy.DXFile
     current_chunk = 1
     bcf_files = []
     for file in file_chunk_names:
-        cmd = f'bcftools view --threads 2 -e "alt==\'*\'" -T /test/{file} ' \
+        cmd = f'bcftools view --threads 8 -e "alt==\'*\'" -T /test/{file} ' \
               f'-Ob -o /test/{vcf_prefix}_chunk{current_chunk}.bcf ' \
               f'/test/{vcf_prefix}.norm.bcf'
         CMD_EXEC.run_cmd_on_docker(cmd)
@@ -226,18 +235,17 @@ def process_vcf(input_vcf: str, chunk_size: int) -> Tuple[List[dxpy.DXFile], Dic
         information about the file that has been split for documentation purposes.
     """
 
-    # Download the VCF
+    # 1. Download the VCF
     vcf_prefix, vcf_size = download_vcf(input_vcf)
 
-    # 2. Normalise and left-correct all variants
-    normalise_and_left_correct(vcf_prefix)
+    # 2. generate a list of all variants in the file, filtering for large alt size
+    norm_sites, n_norm_lines, n_final_lines, n_norm_alts = generate_and_count_variant_list(Path(f'{vcf_prefix}.norm.bcf'))
 
-    # Do actual splitting of the target VCF:
-    # 3. generate a list of all variants in the file
-    norm_sites, n_norm_lines, n_norm_alts = generate_and_count_variant_list(Path(f'{vcf_prefix}.norm.bcf'))
+    # 3. Normalise and left-correct all variants
+    normalise_and_left_correct(vcf_prefix, norm_sites)
 
     # Collate information about this file
-    log_info = {'vcf_prefix': vcf_prefix, 'n_sites': n_norm_lines, 'vcf_size': vcf_size}
+    log_info = {'vcf_prefix': vcf_prefix, 'n_sites': n_norm_lines, 'n_final_sites': n_final_lines, 'vcf_size': vcf_size}
 
     # Some WGS-based vcfs are meant to have 0 sites, and we want to capture that here, so we have a full accounting
     if n_norm_lines == 0:
@@ -293,7 +301,7 @@ def main(input_vcfs: dict, chunk_size: int, human_reference: dict, human_referen
         ingest_human_reference(human_reference, human_reference_index)
 
         # Use thread utility to multi-thread this process:
-        thread_utility = ThreadUtility(thread_factor=2,
+        thread_utility = ThreadUtility(thread_factor=8,
                                        error_message='A splitting thread failed',
                                        incrementor=5)
 
@@ -312,7 +320,7 @@ def main(input_vcfs: dict, chunk_size: int, human_reference: dict, human_referen
         size_zero_bcf_count = 0
         with split_info_path.open('w') as split_info_file:
             split_info_csv = csv.DictWriter(split_info_file,
-                                            fieldnames=['vcf_prefix', 'n_sites', 'vcf_size'],
+                                            fieldnames=['vcf_prefix', 'n_sites', 'n_final_sites', 'vcf_size'],
                                             delimiter='\t')
             split_info_csv.writeheader()
 
@@ -324,7 +332,7 @@ def main(input_vcfs: dict, chunk_size: int, human_reference: dict, human_referen
                 split_info_csv.writerow(info)
 
         LOGGER.info(f'Number of VCFs with 0 sites: {size_zero_bcf_count} '
-                    f'({(size_zero_bcf_count / n_vcfs)*100:0.2f}%)')
+                    f'({(size_zero_bcf_count / n_vcfs) * 100:0.2f}%)')
         if size_zero_bcf_count == 0:
             LOGGER.warning(f'All VCFs in this run were empty. This job will produce 0 output BCF files.')
 
