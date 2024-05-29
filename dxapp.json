@@ -24,6 +24,14 @@
       "help": "The number of variants to include per-output BCF produced by this applet. Lines per-file cannot be smaller than [chunk_size] / 2."
     },
     {
+      "name": "alt_allele_threshold",
+      "label": "alt allele filtering threshold",
+      "class": "int",
+      "optional": true,
+      "default": 50,
+      "help": "The maximum number of alternate alleles in a single variant before filtering a site. Uses '>' (greater than) to determine threshold [50]."
+    },
+    {
       "name": "human_reference",
       "label": "Human reference genome",
       "class": "file",
@@ -86,6 +94,16 @@
         "*.tsv"
       ],
       "help": "Information about each processed file"
+    },
+    {
+      "name": "skipped_sites",
+      "label": "Sites skipped due to alt_allele_threshold input parameter",
+      "class": "file",
+      "optional": false,
+      "patterns": [
+        "*.tsv"
+      ],
+      "help": "A .tsv file containing sites with > alt_allele_threshold alternate alleles."
     }
   ],
   "runSpec": {
@@ -105,7 +123,7 @@
         "name": "general_utilities",
         "package_manager": "git",
         "url":  "https://github.com/mrcepid-rap/general_utilities.git",
-        "tag": "v1.3.0",
+        "tag": "v1.4.0",
         "build_commands": "pip3 install ."
       }
     ]
