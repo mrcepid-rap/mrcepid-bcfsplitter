@@ -40,9 +40,12 @@ def ingest_human_reference(human_reference: dict, human_reference_index: dict) -
 def replace_multi_suffix(original_path: Path, new_suffix: str) -> Path:
     """A helper function to replace a path on a file with multiple suffixes (e.g., .tsv.gz)
 
+    This function just loops through the path and recursively removes the string after '.'. Once there are no more
+    full stops it then adds the requested :param: new_suffix.
+
     :param original_path: The original filepath
     :param new_suffix: The new suffix to add
-    :return: A Pathlike to the new filename
+    :return: A Pathlike to the new file
     """
 
     while original_path.suffix:
@@ -51,8 +54,28 @@ def replace_multi_suffix(original_path: Path, new_suffix: str) -> Path:
     return original_path.with_suffix(new_suffix)
 
 
+def generate_site_tsv(vcf_file: Path, sites_suffix: str) -> Path:
+    """This method is a helper to generate a sites file for a given input VCF file
+
+    A simple wrapper around `bcftools query` to generate a .tsv file with columns of CHROM, POS, REF, ALT, AC. This file
+    will not contain a header, and thus needs to be considered when reading the file with a :func:`csv.DictReader`.
+
+    :param vcf_file: A Pathlike representation of a VCF or BCF file (can also be gzipped).
+    :param sites_suffix: The suffix to append to the sites file.
+    :return: A Pathlike to the generated sites file
+    """
+
+    sites_file = replace_multi_suffix(vcf_file, sites_suffix)
+
+    cmd = f'bcftools query -f "%CHROM\\t%POS\\t%REF\\t%ALT\\t%AC\\n" ' \
+          f'-o /test/{sites_file} /test/{vcf_file}'
+    CMD_EXEC.run_cmd_on_docker(cmd)
+
+    return sites_file
+
+
 def download_vcf(input_vcf: str) -> Tuple[Path, int]:
-    """Helper function that downloads a VCF, and it's index, then returns the filename prefix for that vcf
+    """Helper function that downloads a VCF and it's index, and then calculates the filesize for record-keeping purposes.
 
     :param input_vcf: An input_vcf file in the form of a DNANexus file ID (file-123456...)
     :return: The downloaded VCF file and the size (in bytes) of the VCF file
@@ -83,27 +106,25 @@ def download_vcf(input_vcf: str) -> Tuple[Path, int]:
     return vcfpath, vcf_size
 
 
-def generate_and_count_variant_list(vcf_file: Path, alt_allele_threshold: int) -> Tuple[Path, List[Dict], int, int, int]:
-    """Generates a txt file of all variants in the provided BCF file
+def count_variant_list_and_filter(vcf_file: Path, alt_allele_threshold: int) -> Tuple[Path, List[Dict], int, int, int]:
+    """Counts the total number of variants in a given VCF/BCF and filters out sites with excessive alternate alleles
 
-    This method is a wrapper around bcftools query to print a .tsv file with columns of CHROM and POS. This file can
-    then be used to generate split lists of files to extract variants into separate chunks.
+    This method 1st uses the :func:`generate_site_tsv` helper function to query the bcf and print a .tsv file.
 
-    This method also filters sites with excessive alternate alleles. This is because to load them into memory would
-    result in excessive memory use and cause the machine running it to crash.
+    This method then filters sites with excessive alternate alleles. This is because to load them into memory would
+    result in excessive memory use and cause the machine running it to crash. This filtered set of variants is then
+    written to a sites file to be used for filtering of sites. Filtered sites are retained as a dictionary and
+    returned, so they can be written to a file that documents filtered sites. Alleles with a minor allele frequency >
+    0.1% are specifically captured in order to know blind spots during subsequent analysis.
 
     :param vcf_file: A vcf file to generate a sites list for
     :param alt_allele_threshold: Number of alternate alleles to allow in a variant before it is excluded
-    :return: A tuple of the generated sites file, a dict of failed sites, the number of variant rows, the number of
-        pass variant rows, and the number of alternate alleles
+    :return: A tuple of the generated sites file as a Pathlike, a dict of failed sites, the number of variant rows, the
+        number of pass variant rows, and the number of alternate alleles
     """
 
-    sites_file = replace_multi_suffix(vcf_file, '.sites.unfiltered.txt')
+    sites_file = generate_site_tsv(vcf_file, '.sites.unfiltered.txt')
     filtered_sites_file = replace_multi_suffix(vcf_file, '.sites.txt')
-
-    cmd = f'bcftools query -f "%CHROM\\t%POS\\t%REF\\t%ALT\\t%AC\\n" ' \
-          f'-o /test/{sites_file} /test/{vcf_file}'
-    CMD_EXEC.run_cmd_on_docker(cmd)
 
     with sites_file.open('r') as sites_reader, \
             filtered_sites_file.open('w') as filtered_sites_writer:
@@ -128,6 +149,7 @@ def generate_and_count_variant_list(vcf_file: Path, alt_allele_threshold: int) -
                 acs = list(map(int, variant['AC'].split(',')))
                 n_var_alt = len(alt_alleles)
 
+                # Check if the variant has too many alternate alleles
                 if n_var_alt > alt_allele_threshold:
 
                     # Capture the site that failed
@@ -151,39 +173,38 @@ def generate_and_count_variant_list(vcf_file: Path, alt_allele_threshold: int) -
         return filtered_sites_file, failed_sites, n_vcf_lines, n_final_lines, n_vcf_alternates
 
 
-def normalise_and_left_correct(bcf_files: List[Path]) -> List[dxpy.DXFile]:
+def normalise_and_left_correct(bcf_file: Path, site_list: Path) -> Path:
     """A wrapper for BCFtools norm to left-normalise and split all variants
 
-    Generate a normalised bcf file for all downstream processing:
+    Generate a normalised bcf file for all downstream processing using `bcftools norm`:
     -m : splits all multiallelics into separate records
     -f : provides a reference file so bcftools can left-normalise and check records against the reference genome
+    -T : restricts the normalisation to a list of sites given by :param site_list:
     --old-rec-tag : sets a tag in the resulting bcf that contains the original record – used for IDing multi-allelics
         after splitting
 
-    :param bcf_files: A list of bcffiles to normalise and left-correct
+    :param bcf_file: A list of bcffiles to normalise and left-correct
+    :param site_list: A list of sites to restrict to and then normalise and left-correct
     :return: A Path object to the normalised and left-corrected BCF file
     """
 
-    final_files = []
-    for split_bcf in bcf_files:
+    out_bcf = replace_multi_suffix(bcf_file, '.norm.bcf')
+    cmd = f'bcftools norm --threads 8 -w 100 -Ob -m - -f /test/reference.fasta ' \
+          f'-T /test/{site_list} ' \
+          f'--old-rec-tag MA ' \
+          f'-o /test/{out_bcf} /test/{bcf_file}'
+    CMD_EXEC.run_cmd_on_docker(cmd)
+    bcf_file.unlink()
 
-        out_bcf = split_bcf.with_suffix('.norm.bcf')
-        cmd = f'bcftools norm --threads 8 -w 100 -Ob -m - -f /test/reference.fasta ' \
-              f'--old-rec-tag MA ' \
-              f'-o /test/{out_bcf} /test/{split_bcf}'
-        CMD_EXEC.run_cmd_on_docker(cmd)
-        split_bcf.unlink()
-        final_files.append(generate_linked_dx_file(out_bcf))
-
-    return final_files
+    return out_bcf
 
 
 def split_sites(filtered_sites_file: Path, n_lines: int, chunk_size: int) -> List[Path]:
     """Split site lists from a single VCF into multiple site lists to facilitate variant extraction
 
     This method is essentially is a re-code of the *NIX split command with a few special tweaks to:
-    1. Ensure that BCF files smaller than 2,500 variants do not get created
-    2. Make sure that variants do not get duplicated at the beginning/end of VCFs due to poor handling of MNVs
+    1. Ensure that BCF files smaller than chunk_size / 2 variants do not get created
+    2. Make sure that variants do not get duplicated at the beginning/end of VCFs due to poor handling of multi-allelics
 
     :param filtered_sites_file: The filtered sites file
     :param n_lines: Number of sites in the provided BCF file
@@ -214,7 +235,7 @@ def split_sites(filtered_sites_file: Path, n_lines: int, chunk_size: int) -> Lis
         # 'current_index' stores the actual variants to be extracted for each chunk
         sites = csv.DictReader(sites_reader,
                                delimiter='\t',
-                               fieldnames=['chrom', 'pos', 'ref', 'alt'],
+                               fieldnames=['chrom', 'pos', 'ref', 'alt', 'ac'],
                                quoting=csv.QUOTE_NONE)
         current_index_writer = current_index_path.open('w')
 
@@ -250,7 +271,7 @@ def split_sites(filtered_sites_file: Path, n_lines: int, chunk_size: int) -> Lis
     return file_chunk_paths
 
 
-def split_bcfs(vcf_file: Path, file_chunk_names: List[Path]) -> List[Path]:
+def split_bcfs(vcf_file: Path, file_chunk_names: List[Path]) -> List[dxpy.DXFile]:
     """A wrapper around bcftools view that generates smaller chunks from the original VCF file
 
     We also remove star '*' alleles at this point as we do not use them for any subsequent association testing.
@@ -267,7 +288,7 @@ def split_bcfs(vcf_file: Path, file_chunk_names: List[Path]) -> List[Path]:
               f'-Ob -o /test/{out_bcf} ' \
               f'/test/{vcf_file}'
         CMD_EXEC.run_cmd_on_docker(cmd)
-        bcf_files.append(out_bcf)
+        bcf_files.append(generate_linked_dx_file(out_bcf))
 
     vcf_file.unlink()
 
@@ -294,8 +315,8 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int) -> T
     vcf_path, vcf_size = download_vcf(input_vcf)
 
     # 2. generate a list of all variants in the file, filtering for large alt size
-    LOGGER.info('Generating variant list...')
-    norm_sites, failed_sites, n_norm_lines, n_final_lines, n_norm_alts = generate_and_count_variant_list(vcf_path,
+    LOGGER.info('Generating initial variant list...')
+    orig_sites, failed_sites, n_norm_lines, n_final_lines, n_norm_alts = generate_and_count_variant_list(vcf_path,
                                                                                                          alt_allele_threshold)
 
     # Collate information about this file
@@ -307,17 +328,20 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int) -> T
 
     else:
 
+        LOGGER.info('Normalising and left-correcting...')
+        # 3. Normalise and left-correct all variants
+        norm_bcf = normalise_and_left_correct(vcf_path, orig_sites)
+
+        LOGGER.info('Generating normalised variant list...')
+        norm_sites = generate_site_tsv(norm_bcf, '.norm.sites.txt')
+
         # 4. Generate reasonable sized (param: chunk_size) lists of variants:
         LOGGER.info('Splitting sites...')
         file_chunk_paths = split_sites(norm_sites, n_norm_lines, chunk_size)
 
         LOGGER.info('Splitting BCFs...')
         # 5. And actually split the files into chunks:
-        bcf_files = split_bcfs(vcf_path, file_chunk_paths)
-
-        LOGGER.info('Normalising and left-correcting...')
-        # 3. Normalise and left-correct all variants
-        final_files = normalise_and_left_correct(bcf_files)
+        final_files = split_bcfs(norm_bcf, file_chunk_paths)
 
     return final_files, log_info, failed_sites
 
