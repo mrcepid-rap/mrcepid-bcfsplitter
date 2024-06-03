@@ -316,8 +316,8 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int) -> T
 
     # 2. generate a list of all variants in the file, filtering for large alt size
     LOGGER.info('Generating initial variant list...')
-    orig_sites, failed_sites, n_norm_lines, n_final_lines, n_norm_alts = generate_and_count_variant_list(vcf_path,
-                                                                                                         alt_allele_threshold)
+    orig_sites, failed_sites, n_norm_lines, n_final_lines, n_norm_alts = count_variant_list_and_filter(vcf_path,
+                                                                                                       alt_allele_threshold)
 
     # Collate information about this file
     log_info = {'vcf': vcf_path.name, 'dxid': input_vcf, 'n_sites': n_norm_lines, 'n_final_sites': n_final_lines, 'vcf_size': vcf_size}
