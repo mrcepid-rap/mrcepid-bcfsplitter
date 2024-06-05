@@ -109,7 +109,7 @@
   "runSpec": {
     "timeoutPolicy": {
       "*": {
-        "hours": 12
+        "hours": 4
       }
     },
     "interpreter": "python3",
@@ -117,6 +117,11 @@
     "distribution": "Ubuntu",
     "release": "20.04",
     "version": "0",
+    "executionPolicy": {
+      "restartOn": {
+        "*": 1
+      }
+    },
     "assetDepends": [],
     "execDepends": [
       {
@@ -136,7 +141,7 @@
     "aws:eu-west-2": {
       "systemRequirements": {
         "*": {
-          "instanceType": "mem3_ssd1_v2_x64"
+          "instanceType": "mem1_ssd1_v2_x72"
         }
       }
     }
