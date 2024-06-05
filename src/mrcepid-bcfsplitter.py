@@ -315,7 +315,6 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int) -> T
     vcf_path, vcf_size = download_vcf(input_vcf)
 
     # 2. generate a list of all variants in the file, filtering for large alt size
-    LOGGER.info('Generating initial variant list...')
     orig_sites, failed_sites, n_norm_lines, n_final_lines, n_norm_alts = count_variant_list_and_filter(vcf_path,
                                                                                                        alt_allele_threshold)
 
@@ -328,18 +327,14 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int) -> T
 
     else:
 
-        LOGGER.info('Normalising and left-correcting...')
         # 3. Normalise and left-correct all variants
         norm_bcf = normalise_and_left_correct(vcf_path, orig_sites)
 
-        LOGGER.info('Generating normalised variant list...')
         norm_sites = generate_site_tsv(norm_bcf, '.norm.sites.txt')
 
         # 4. Generate reasonable sized (param: chunk_size) lists of variants:
-        LOGGER.info('Splitting sites...')
         file_chunk_paths = split_sites(norm_sites, n_norm_lines, chunk_size)
 
-        LOGGER.info('Splitting BCFs...')
         # 5. And actually split the files into chunks:
         final_files = split_bcfs(norm_bcf, file_chunk_paths)
 

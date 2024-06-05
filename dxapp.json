@@ -28,8 +28,8 @@
       "label": "alt allele filtering threshold",
       "class": "int",
       "optional": true,
-      "default": 50,
-      "help": "The maximum number of alternate alleles in a single variant before filtering a site. Uses '>' (greater than) to determine threshold [50]."
+      "default": 99999,
+      "help": "The maximum number of alternate alleles in a single variant before filtering a site. Uses '>' (greater than) to determine threshold [99999]."
     },
     {
       "name": "human_reference",
