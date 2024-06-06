@@ -342,7 +342,7 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int) -> T
 
 
 @dxpy.entry_point('main')
-def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, human_reference: dict,
+def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_name: str, human_reference: dict,
          human_reference_index: dict, testing_script: dict, testing_directory: str) -> dict:
     """This is the :func:`main()` method for all apps/applets required by DNANexus.
 
@@ -357,6 +357,7 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, human_ref
     :param chunk_size: The number of variants to include per-output BCF produced by this applet. Lines per-file cannot
         be smaller than [chunk_size] / 2.
     :param alt_allele_threshold: Number of alternate alleles to allow in a variant before it is excluded
+    :param output_name: A prefix to use for output files
     :param human_reference_index: Location of the human reference file in dxlink format
     :param human_reference: Location of the human reference file index in dxlink format
     :param testing_script: Script compatible with pytest. If not null, invoke the bcfsplitter testing suite
@@ -397,8 +398,9 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, human_ref
                                           alt_allele_threshold=alt_allele_threshold)
 
         bcf_files = []
-        split_info_path = Path('vcf_info.tsv')
-        skipped_sites_path = Path('skipped_sites.tsv')
+        output_name = f'.{output_name}.' if output_name else '.'
+        split_info_path = Path(f'vcf_info{output_name}tsv')
+        skipped_sites_path = Path(f'skipped_sites{output_name}tsv')
         size_zero_bcf_count = 0
         with split_info_path.open('w') as split_info_file, \
                 skipped_sites_path.open('w') as skipped_sites_file:

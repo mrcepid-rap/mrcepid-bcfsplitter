@@ -24,6 +24,14 @@
       "help": "The number of variants to include per-output BCF produced by this applet. Lines per-file cannot be smaller than [chunk_size] / 2."
     },
     {
+      "name": "output_name",
+      "label": "Output name for info files",
+      "class": "string",
+      "optional": true,
+      "default": null,
+      "help": "Additional string to use when creating information files (run info, skipped_sites). This does NOT modify the name of split VCF files [None]."
+    },
+    {
       "name": "alt_allele_threshold",
       "label": "alt allele filtering threshold",
       "class": "int",
@@ -109,7 +117,7 @@
   "runSpec": {
     "timeoutPolicy": {
       "*": {
-        "hours": 4
+        "hours": 6
       }
     },
     "interpreter": "python3",
@@ -119,7 +127,7 @@
     "version": "0",
     "executionPolicy": {
       "restartOn": {
-        "*": 1
+        "*": 0
       }
     },
     "assetDepends": [],
