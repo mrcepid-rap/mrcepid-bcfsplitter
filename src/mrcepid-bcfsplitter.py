@@ -15,7 +15,8 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Tuple
 
-from general_utilities.association_resources import generate_linked_dx_file, download_dxfile_by_name
+from general_utilities.association_resources import generate_linked_dx_file, download_dxfile_by_name, \
+    replace_multi_suffix
 from general_utilities.job_management.command_executor import build_default_command_executor
 from general_utilities.job_management.thread_utility import ThreadUtility
 from general_utilities.mrc_logger import MRCLogger
@@ -35,23 +36,6 @@ def ingest_human_reference(human_reference: dict, human_reference_index: dict) -
     dxpy.download_dxfile(dxpy.DXFile(human_reference_index).get_id(), "reference.fasta.fai")
     cmd = "gunzip reference.fasta.gz"  # Better to unzip the reference for most commands for some reason...
     CMD_EXEC.run_cmd(cmd)
-
-
-def replace_multi_suffix(original_path: Path, new_suffix: str) -> Path:
-    """A helper function to replace a path on a file with multiple suffixes (e.g., .tsv.gz)
-
-    This function just loops through the path and recursively removes the string after '.'. Once there are no more
-    full stops it then adds the requested :param: new_suffix.
-
-    :param original_path: The original filepath
-    :param new_suffix: The new suffix to add
-    :return: A Pathlike to the new file
-    """
-
-    while original_path.suffix:
-        original_path = original_path.with_suffix('')
-
-    return original_path.with_suffix(new_suffix)
 
 
 def generate_site_tsv(vcf_file: Path, sites_suffix: str) -> Path:
