@@ -99,7 +99,7 @@
       "class": "file",
       "optional": false,
       "patterns": [
-        "*.tsv"
+        "vcf_info.*.tsv"
       ],
       "help": "Information about each processed file"
     },
@@ -109,7 +109,7 @@
       "class": "file",
       "optional": false,
       "patterns": [
-        "*.tsv"
+        "skipped_sites.*.tsv"
       ],
       "help": "A .tsv file containing sites with > alt_allele_threshold alternate alleles."
     }

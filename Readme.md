@@ -41,15 +41,30 @@ dx describe file-1234567890ABCDEFGHIJKLMN
 
 ### Changelog
 
+* v2.0.0
+  * Added support for WGS data. This comes with several changes under-the-hood to support issues with the larger WGS data. These changes will not effect processing of WES data, but please see below for specific changes:
+    * Modified standard number of CPUs per-vcf to 8. We have done extensive testing to ensure that the process is $O(n^2)$ in terms of CPU usage – e.g., 2 CPUs = 60m / VCF, 4 CPUs = 30m / VCF
+    * Fixed an issue with sites with large number of alternate alleles.
+      * Issue can lead to excessive memory requirements when processing some VCFs.
+      * We have added a method to filter sites with excessive alternate alleles, which can be triggered using the `alt_allele_threshold` parameter.
+      * This parameter is set to 99999 by default, so will not affect WES processing
+      * We recommend a setting of 15 when analysing WGS data
+      * All sites that are filtered will be reported in the `skipped_sites.{output_name}.tsv`
+  * Several quality-of-life changes to the codebase to improve readability and maintainability
+  * Implemented newer version of `general_utilities`
+  * Added docstrings to all functions
+
 * v1.0.0
   * Initial numbered release, see git logs for previous changes.
 
 ### Background
 
-UKBiobank provides a total of 977 individual .vcf.gz files (located at `Bulk/Exome sequences/Population level exome OQFE variants, pVCF format - final release/*.vcf.gz`).
-This is the same number as for the 200k release despite the sample size increased by ~2.5x. As such, pipelines designed to
-work on the 200k data no longer work as efficiently; we wrote this tool to split provided vcf.gz files into
-smaller chunks.
+UKBiobank provides individual .vcf.gz files. This is the same number as for the 200k release despite the sample size 
+increased by ~2.5x. As such, pipelines designed to work on the 200k data no longer work as efficiently; we wrote 
+this tool to split provided vcf.gz files into smaller chunks. Default file locations on the RAP are as follows:
+
+* WES: `/Bulk/Exome sequences/Population level exome OQFE variants, pVCF format - final release/`
+* WGS: `/Bulk/DRAGEN WGS/Whole genome variant call files (GVCFs) (DRAGEN) [500k release]/`
 
 ### Dependencies
 
