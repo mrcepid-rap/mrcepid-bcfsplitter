@@ -21,7 +21,7 @@
       "class": "int",
       "optional": true,
       "default": 5000,
-      "help": "The number of variants to include per-output BCF produced by this applet. Lines per-file cannot be smaller than [chunk_size] / 2."
+      "help": "The number of variants to include per-output BCF produced by this applet. See README for how this works in practice [5000]."
     },
     {
       "name": "output_name",
