@@ -252,4 +252,7 @@ priority as the longer a job runs, the more likely it is to be interrupted. Usin
 had good results on low priority with 18 VCFs / job. This strikes a reasonable balance between number of jobs to monitor
 (DNANexus is limited to 100 jobs / user) and the likelihood of using low priority.
 
+**Note:** If running more than 18 files / job, you may need to adjust the timeoutPolicy parameter in `dxapp.json` when
+building this applet.
+
 If necessary to adjust compute resources, one can provide a flag like `--instance-type mem1_ssd1_v2_x36`.
