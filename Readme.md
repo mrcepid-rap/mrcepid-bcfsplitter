@@ -15,10 +15,11 @@ https://documentation.dnanexus.com/.
 - [Methodology](#methodology)
 - [Running on DNANexus](#running-on-dnanexus)
   * [Inputs](#inputs)
+    + [Generating an Input VCF list](#generating-an-input-vcf-list)
+    + [Alt Allele Threshold](#alt-allele-threshold)
   * [Outputs](#outputs)
   * [Command line example](#command-line-example)
-    + [Batch Running](#batch-running)
-
+  * [VM Resources](#vm-resources)
 
 ## Introduction
 
@@ -155,7 +156,7 @@ file-JIHGFEDCBA0987654321
 
 Where `file-1234567890ABCDEEFGHIJ` is the DNANexus file ID for an unprocessed vcf file.
 
-#### Generating an input_vcfs List
+#### Generating an Input VCF List
 
 Please find an example (for WES data) of generating the input list(s) for the `input_vcfs` parameter below:
 
