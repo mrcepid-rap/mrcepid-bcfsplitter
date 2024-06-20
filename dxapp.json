@@ -121,7 +121,7 @@
       }
     },
     "interpreter": "python3",
-    "file": "src/mrcepid-bcfsplitter.py",
+    "file": "bcfsplitter/bcfsplitter.py",
     "distribution": "Ubuntu",
     "release": "20.04",
     "version": "0",

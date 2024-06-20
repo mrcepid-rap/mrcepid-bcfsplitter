@@ -17,7 +17,7 @@ from typing import List, Dict, Tuple
 
 from general_utilities.association_resources import generate_linked_dx_file, download_dxfile_by_name, \
     replace_multi_suffix
-from general_utilities.job_management.command_executor import build_default_command_executor
+from general_utilities.job_management.command_executor import build_default_command_executor, CommandExecutor
 from general_utilities.job_management.thread_utility import ThreadUtility
 from general_utilities.mrc_logger import MRCLogger
 
@@ -25,20 +25,22 @@ LOGGER = MRCLogger().get_logger()
 CMD_EXEC = build_default_command_executor()
 
 
-def ingest_human_reference(human_reference: dict, human_reference_index: dict) -> None:
+def ingest_human_reference(human_reference: dict, human_reference_index: dict, cmd_exec: CommandExecutor = CMD_EXEC) -> None:
     """Download human reference files – default dxIDs are the location of the GRCh38 reference file on AWS London
 
     :param human_reference: DXLink to the human reference file (must be a .fa.gz)
     :param human_reference_index: DXLink to the human reference file index
+    :param cmd_exec: An optional alternate CommandExecutor to use for executing system calls. Defaults to the default
+        CMD_EXEC from this module.
     """
 
     dxpy.download_dxfile(dxpy.DXFile(human_reference).get_id(), "reference.fasta.gz")
     dxpy.download_dxfile(dxpy.DXFile(human_reference_index).get_id(), "reference.fasta.fai")
     cmd = "gunzip reference.fasta.gz"  # Better to unzip the reference for most commands for some reason...
-    CMD_EXEC.run_cmd(cmd)
+    cmd_exec.run_cmd(cmd)
 
 
-def generate_site_tsv(vcf_file: Path, sites_suffix: str) -> Path:
+def generate_site_tsv(vcf_file: Path, sites_suffix: str, cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
     """This method is a helper to generate a sites file for a given input VCF file
 
     A simple wrapper around `bcftools query` to generate a .tsv file with columns of CHROM, POS, REF, ALT, AC. This file
@@ -46,6 +48,8 @@ def generate_site_tsv(vcf_file: Path, sites_suffix: str) -> Path:
 
     :param vcf_file: A Pathlike representation of a VCF or BCF file (can also be gzipped).
     :param sites_suffix: The suffix to append to the sites file.
+    :param cmd_exec: An optional alternate CommandExecutor to use for executing system calls. Defaults to the default
+        CMD_EXEC from this module.
     :return: A Pathlike to the generated sites file
     """
 
@@ -53,7 +57,7 @@ def generate_site_tsv(vcf_file: Path, sites_suffix: str) -> Path:
 
     cmd = f'bcftools query -f "%CHROM\\t%POS\\t%REF\\t%ALT\\t%AC\\n" ' \
           f'-o /test/{sites_file} /test/{vcf_file}'
-    CMD_EXEC.run_cmd_on_docker(cmd)
+    cmd_exec.run_cmd_on_docker(cmd)
 
     return sites_file
 
@@ -157,7 +161,7 @@ def count_variant_list_and_filter(vcf_file: Path, alt_allele_threshold: int) -> 
         return filtered_sites_file, failed_sites, n_vcf_lines, n_final_lines, n_vcf_alternates
 
 
-def normalise_and_left_correct(bcf_file: Path, site_list: Path) -> Path:
+def normalise_and_left_correct(bcf_file: Path, site_list: Path, cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
     """A wrapper for BCFtools norm to left-normalise and split all variants
 
     Generate a normalised bcf file for all downstream processing using `bcftools norm`:
@@ -169,6 +173,8 @@ def normalise_and_left_correct(bcf_file: Path, site_list: Path) -> Path:
 
     :param bcf_file: A list of bcffiles to normalise and left-correct
     :param site_list: A list of sites to restrict to and then normalise and left-correct
+    :param cmd_exec: An optional alternate CommandExecutor to use for executing system calls. Defaults to the default
+        CMD_EXEC from this module.
     :return: A Path object to the normalised and left-corrected BCF file
     """
 
@@ -177,7 +183,7 @@ def normalise_and_left_correct(bcf_file: Path, site_list: Path) -> Path:
           f'-T /test/{site_list} ' \
           f'--old-rec-tag MA ' \
           f'-o /test/{out_bcf} /test/{bcf_file}'
-    CMD_EXEC.run_cmd_on_docker(cmd)
+    cmd_exec.run_cmd_on_docker(cmd)
     bcf_file.unlink()
 
     return out_bcf
@@ -197,10 +203,7 @@ def split_sites(filtered_sites_file: Path, n_lines: int, chunk_size: int) -> Lis
     """
 
     # Determine if we have to append or create a new file based on line number cutoff
-    if n_lines % chunk_size < (chunk_size / 2):
-        append_last = True
-    else:
-        append_last = False
+    append_last = n_lines % chunk_size < (chunk_size / 2)
 
     # Then do second iteration to write the actual index files:
     with filtered_sites_file.open('r') as sites_reader:
@@ -210,9 +213,7 @@ def split_sites(filtered_sites_file: Path, n_lines: int, chunk_size: int) -> Lis
         write_next_variant = True
 
         # Store the actual names of each chunk, so we can do the actual bcftools extraction later
-        current_index_path = replace_multi_suffix(filtered_sites_file,
-                                                  f'.chunk{current_index_num}')
-        file_chunk_paths = [current_index_path]
+        file_chunk_paths = []
 
         # Collection of files that store different information for i/o:
         # 'sites' is the reader of ALL variants in the BCF
@@ -221,22 +222,25 @@ def split_sites(filtered_sites_file: Path, n_lines: int, chunk_size: int) -> Lis
                                delimiter='\t',
                                fieldnames=['chrom', 'pos', 'ref', 'alt', 'ac'],
                                quoting=csv.QUOTE_NONE)
-        current_index_writer = current_index_path.open('w')
 
         # Do the iteration itself
+        chunk_variant_count = 0
         for site in sites:
             if sites.line_num == 1:
-                pass
+                current_index_path = replace_multi_suffix(filtered_sites_file,
+                                                          f'.chunk{current_index_num}')
+                current_index_writer = current_index_path.open('w')
             elif (sites.line_num - 1) % chunk_size == 0:
-                if (n_lines - sites.line_num) < (chunk_size / 2) and append_last is True:
+                if (n_lines - (sites.line_num - 1)) < (chunk_size / 2) and append_last is True:
                     logging.info("Appending remaining lines to end of last chunk...")
                 else:
+                    file_chunk_paths.append(current_index_path)
                     current_index_writer.close()
+                    chunk_variant_count = 0
                     current_index_num += 1
                     current_index_path = replace_multi_suffix(filtered_sites_file,
                                                               f'.chunk{current_index_num}')
                     current_index_writer = current_index_path.open('w')
-                    file_chunk_paths.append(current_index_path)
 
             # Don't write duplicate positions as BCFTools can only process on position rather than position / ref / alt
             if int(site['pos']) == current_end:
@@ -244,24 +248,32 @@ def split_sites(filtered_sites_file: Path, n_lines: int, chunk_size: int) -> Lis
 
             # Allows me to control writing of variants
             if write_next_variant:
+                chunk_variant_count += 1
                 current_index_writer.write(f"{site['chrom']}\t{site['pos']}\n")
                 current_end = int(site['pos'])
             else:
                 write_next_variant = True
 
-        # Make sure we close the final writer
+        # Make sure we close the final writer – in very rare cases the file might be empty due to the last variant
+        # being a duplicate position
         current_index_writer.close()
+        if chunk_variant_count == 0:
+            current_index_path.unlink()
+        else:
+            file_chunk_paths.append(current_index_path)
 
     return file_chunk_paths
 
 
-def split_bcfs(vcf_file: Path, file_chunk_names: List[Path]) -> List[dxpy.DXFile]:
+def split_bcfs(vcf_file: Path, file_chunk_names: List[Path], cmd_exec: CommandExecutor = CMD_EXEC) -> List[dxpy.DXFile]:
     """A wrapper around bcftools view that generates smaller chunks from the original VCF file
 
     We also remove star '*' alleles at this point as we do not use them for any subsequent association testing.
 
     :param vcf_file: Path to the downloaded VCF to split into chunks
     :param file_chunk_names: A List of individual file chunk Paths of split variant lists
+    :param cmd_exec: An optional alternate CommandExecutor to use for executing system calls. Defaults to the default
+        CMD_EXEC from this module.
     :return: A List of individual file chunk Pathlikes of split BCF files
     """
 
@@ -271,7 +283,7 @@ def split_bcfs(vcf_file: Path, file_chunk_names: List[Path]) -> List[dxpy.DXFile
         cmd = f'bcftools view --threads 8 -e "alt==\'*\'" -T /test/{file_chunk} ' \
               f'-Ob -o /test/{out_bcf} ' \
               f'/test/{vcf_file}'
-        CMD_EXEC.run_cmd_on_docker(cmd)
+        cmd_exec.run_cmd_on_docker(cmd)
         bcf_files.append(generate_linked_dx_file(out_bcf))
 
     vcf_file.unlink()
@@ -452,4 +464,5 @@ def test(input_vcfs: dict, testing_script: dict, testing_directory: str) -> Dict
     return {}
 
 
-dxpy.run()
+if __name__ == '__main__':
+    dxpy.run()
