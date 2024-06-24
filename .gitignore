@@ -1,1 +1,4 @@
 /test/dx_run.log
+/test/test_data/test_input.sites.unfiltered.txt
+/test/test_data/reference.fasta
+/test/test_data/reference.fasta.fai

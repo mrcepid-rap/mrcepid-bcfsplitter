@@ -13,7 +13,7 @@ import dxpy
 import logging
 
 from pathlib import Path
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
 
 from general_utilities.association_resources import generate_linked_dx_file, download_dxfile_by_name, \
     replace_multi_suffix
@@ -94,7 +94,7 @@ def download_vcf(input_vcf: str) -> Tuple[Path, int]:
     return vcfpath, vcf_size
 
 
-def count_variant_list_and_filter(vcf_file: Path, alt_allele_threshold: int) -> Tuple[Path, List[Dict], int, int, int]:
+def count_variant_list_and_filter(sites_file: Path, alt_allele_threshold: int) -> Tuple[Path, List[Dict], int, int]:
     """Counts the total number of variants in a given VCF/BCF and filters out sites with excessive alternate alleles
 
     This method 1st uses the :func:`generate_site_tsv` helper function to query the bcf and print a .tsv file.
@@ -105,14 +105,15 @@ def count_variant_list_and_filter(vcf_file: Path, alt_allele_threshold: int) -> 
     returned, so they can be written to a file that documents filtered sites. Alleles with a minor allele frequency >
     0.1% are specifically captured in order to know blind spots during subsequent analysis.
 
-    :param vcf_file: A vcf file to generate a sites list for
+    :param sites_file: An *unfiltered* sites file from a VCF
     :param alt_allele_threshold: Number of alternate alleles to allow in a variant before it is excluded
-    :return: A tuple of the generated sites file as a Pathlike, a dict of failed sites, the number of variant rows, the
-        number of pass variant rows, and the number of alternate alleles
+    :param cmd_exec: An optional alternate CommandExecutor to use for executing system calls. Defaults to the default
+        CMD_EXEC from this module.
+    :return: A tuple of the generated sites file as a Pathlike, a dict of failed sites, the number of variant rows,
+        and the number of alternate alleles minus star alleles
     """
 
-    sites_file = generate_site_tsv(vcf_file, '.sites.unfiltered.txt')
-    filtered_sites_file = replace_multi_suffix(vcf_file, '.sites.txt')
+    filtered_sites_file = replace_multi_suffix(sites_file, '.sites.txt')
 
     with sites_file.open('r') as sites_reader, \
             filtered_sites_file.open('w') as filtered_sites_writer:
@@ -120,7 +121,6 @@ def count_variant_list_and_filter(vcf_file: Path, alt_allele_threshold: int) -> 
         filtered_sites_csv = csv.DictWriter(filtered_sites_writer, delimiter='\t', extrasaction='ignore',
                                             fieldnames=['CHROM', 'POS', 'REF', 'ALT'])
         n_vcf_lines = 0
-        n_final_lines = 0
         n_vcf_alternates = 0
 
         failed_sites = []
@@ -136,6 +136,7 @@ def count_variant_list_and_filter(vcf_file: Path, alt_allele_threshold: int) -> 
                 alt_alleles = variant['ALT'].split(',')
                 acs = list(map(int, variant['AC'].split(',')))
                 n_var_alt = len(alt_alleles)
+                n_var_star = alt_alleles.count('*')
 
                 # Check if the variant has too many alternate alleles
                 if n_var_alt > alt_allele_threshold:
@@ -155,13 +156,12 @@ def count_variant_list_and_filter(vcf_file: Path, alt_allele_threshold: int) -> 
                     failed_sites.append(failed_site)
                 else:
                     filtered_sites_csv.writerow(variant)
-                    n_final_lines += 1
-                    n_vcf_alternates += n_var_alt
+                    n_vcf_alternates += (n_var_alt - n_var_star)
 
-        return filtered_sites_file, failed_sites, n_vcf_lines, n_final_lines, n_vcf_alternates
+        return filtered_sites_file, failed_sites, n_vcf_lines, n_vcf_alternates
 
 
-def normalise_and_left_correct(bcf_file: Path, site_list: Path, cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
+def normalise_and_left_correct(vcf_file: Path, site_list: Path, cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
     """A wrapper for BCFtools norm to left-normalise and split all variants
 
     Generate a normalised bcf file for all downstream processing using `bcftools norm`:
@@ -171,20 +171,19 @@ def normalise_and_left_correct(bcf_file: Path, site_list: Path, cmd_exec: Comman
     --old-rec-tag : sets a tag in the resulting bcf that contains the original record – used for IDing multi-allelics
         after splitting
 
-    :param bcf_file: A list of bcffiles to normalise and left-correct
+    :param vcf_file: A list of bcffiles to normalise and left-correct
     :param site_list: A list of sites to restrict to and then normalise and left-correct
     :param cmd_exec: An optional alternate CommandExecutor to use for executing system calls. Defaults to the default
         CMD_EXEC from this module.
     :return: A Path object to the normalised and left-corrected BCF file
     """
 
-    out_bcf = replace_multi_suffix(bcf_file, '.norm.bcf')
+    out_bcf = replace_multi_suffix(vcf_file, '.norm.bcf')
     cmd = f'bcftools norm --threads 8 -w 100 -Ob -m - -f /test/reference.fasta ' \
           f'-T /test/{site_list} ' \
           f'--old-rec-tag MA ' \
-          f'-o /test/{out_bcf} /test/{bcf_file}'
+          f'-o /test/{out_bcf} /test/{vcf_file}'
     cmd_exec.run_cmd_on_docker(cmd)
-    bcf_file.unlink()
 
     return out_bcf
 
@@ -225,13 +224,14 @@ def split_sites(filtered_sites_file: Path, n_lines: int, chunk_size: int) -> Lis
 
         # Do the iteration itself
         chunk_variant_count = 0
+        overall_variant_count = 1
         for site in sites:
-            if sites.line_num == 1:
+            if overall_variant_count == 1:
                 current_index_path = replace_multi_suffix(filtered_sites_file,
                                                           f'.chunk{current_index_num}')
                 current_index_writer = current_index_path.open('w')
-            elif (sites.line_num - 1) % chunk_size == 0:
-                if (n_lines - (sites.line_num - 1)) < (chunk_size / 2) and append_last is True:
+            elif (overall_variant_count - 1) % chunk_size == 0:
+                if (n_lines - (overall_variant_count - 1)) < (chunk_size / 2) and append_last is True:
                     logging.info("Appending remaining lines to end of last chunk...")
                 else:
                     file_chunk_paths.append(current_index_path)
@@ -240,11 +240,16 @@ def split_sites(filtered_sites_file: Path, n_lines: int, chunk_size: int) -> Lis
                     current_index_num += 1
                     current_index_path = replace_multi_suffix(filtered_sites_file,
                                                               f'.chunk{current_index_num}')
+                    print(current_index_path)
                     current_index_writer = current_index_path.open('w')
 
             # Don't write duplicate positions as BCFTools can only process on position rather than position / ref / alt
             if int(site['pos']) == current_end:
                 write_next_variant = False
+
+            # Get a running total of all variants EXCEPT star alleles
+            if site['alt'] != '*':
+                overall_variant_count += 1
 
             # Allows me to control writing of variants
             if write_next_variant:
@@ -265,7 +270,7 @@ def split_sites(filtered_sites_file: Path, n_lines: int, chunk_size: int) -> Lis
     return file_chunk_paths
 
 
-def split_bcfs(vcf_file: Path, file_chunk_names: List[Path], cmd_exec: CommandExecutor = CMD_EXEC) -> List[dxpy.DXFile]:
+def split_bcfs(vcf_file: Path, file_chunk_names: List[Path], cmd_exec: CommandExecutor = CMD_EXEC) -> List[Path]:
     """A wrapper around bcftools view that generates smaller chunks from the original VCF file
 
     We also remove star '*' alleles at this point as we do not use them for any subsequent association testing.
@@ -284,9 +289,7 @@ def split_bcfs(vcf_file: Path, file_chunk_names: List[Path], cmd_exec: CommandEx
               f'-Ob -o /test/{out_bcf} ' \
               f'/test/{vcf_file}'
         cmd_exec.run_cmd_on_docker(cmd)
-        bcf_files.append(generate_linked_dx_file(out_bcf))
-
-    vcf_file.unlink()
+        bcf_files.append(out_bcf)
 
     return bcf_files
 
@@ -310,36 +313,78 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int) -> T
     # 1. Download the VCF
     vcf_path, vcf_size = download_vcf(input_vcf)
 
-    # 2. generate a list of all variants in the file, filtering for large alt size
-    orig_sites, failed_sites, n_norm_lines, n_final_lines, n_norm_alts = count_variant_list_and_filter(vcf_path,
-                                                                                                       alt_allele_threshold)
+    # 2. Generate a list of all variants in the file
+    sites_file = generate_site_tsv(vcf_path, '.sites.unfiltered.txt')
+
+    # 3. Filter the site list for large alt size
+    orig_sites, failed_sites, n_orig_lines, n_norm_filtered_lines = count_variant_list_and_filter(sites_file,
+                                                                                                  alt_allele_threshold)
 
     # Collate information about this file
-    log_info = {'vcf': vcf_path.name, 'dxid': input_vcf, 'n_sites': n_norm_lines, 'n_final_sites': n_final_lines, 'vcf_size': vcf_size}
+    log_info = {'vcf': vcf_path.name, 'dxid': input_vcf, 'n_sites': n_orig_lines,
+                'n_final_sites': n_norm_filtered_lines, 'vcf_size': vcf_size}
 
     # Some WGS-based vcfs are meant to have 0 sites, and we want to capture that here, so we have a full accounting
-    if n_norm_lines == 0:
+    if n_norm_filtered_lines == 0:
         final_files = []  # Empty since no splitting will happen
+        vcf_path.unlink()
 
     else:
 
-        # 3. Normalise and left-correct all variants
+        # 4. Normalise and left-correct all variants
         norm_bcf = normalise_and_left_correct(vcf_path, orig_sites)
+        vcf_path.unlink()
 
         norm_sites = generate_site_tsv(norm_bcf, '.norm.sites.txt')
 
-        # 4. Generate reasonable sized (param: chunk_size) lists of variants:
-        file_chunk_paths = split_sites(norm_sites, n_norm_lines, chunk_size)
+        # 5. Generate reasonable sized (param: chunk_size) lists of variants:
+        file_chunk_paths = split_sites(norm_sites, n_norm_filtered_lines, chunk_size)
 
-        # 5. And actually split the files into chunks:
-        final_files = split_bcfs(norm_bcf, file_chunk_paths)
+        # 6. And actually split the files into chunks:
+        split_files = split_bcfs(norm_bcf, file_chunk_paths)
+
+        vcf_path.unlink()
+        final_files = [generate_linked_dx_file(file) for file in split_files]
 
     return final_files, log_info, failed_sites
 
 
+def write_information_files(output_name: Optional[str], n_vcfs: int, infos: List[Dict],
+                            skipped_sites: List[Dict], output_dir: Path = Path('./')) -> Tuple[Path, Path]:
+
+    output_name = f'.{output_name}.' if output_name else '.'
+    split_info_path = output_dir / f'vcf_info{output_name}tsv'
+    skipped_sites_path = output_dir / f'skipped_sites{output_name}tsv'
+    size_zero_bcf_count = 0
+    with split_info_path.open('w') as split_info_file, \
+            skipped_sites_path.open('w') as skipped_sites_file:
+        split_info_csv = csv.DictWriter(split_info_file,
+                                        fieldnames=['vcf', 'dxid', 'n_sites', 'n_final_sites', 'vcf_size'],
+                                        delimiter='\t')
+        split_info_csv.writeheader()
+
+        skipped_sites_csv = csv.DictWriter(skipped_sites_file,
+                                           fieldnames=['vcf', 'chrom', 'pos', 'alts', 'acs'],
+                                           delimiter='\t')
+        skipped_sites_csv.writeheader()
+
+        for info, skipped in zip(infos, skipped_sites):
+            if info['n_sites'] == 0:
+                size_zero_bcf_count += 1
+            split_info_csv.writerow(info)
+            for site in skipped_sites:
+                site['vcf'] = info['vcf']
+            skipped_sites_csv.writerows(skipped_sites)
+
+    LOGGER.info(f'Number of VCFs with 0 sites: {size_zero_bcf_count} '
+                f'({(size_zero_bcf_count / n_vcfs) * 100:0.2f}%)')
+
+    return split_info_path, skipped_sites_path
+
+
 @dxpy.entry_point('main')
 def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_name: str, human_reference: dict,
-         human_reference_index: dict, testing_script: dict, testing_directory: str) -> dict:
+         human_reference_index: dict) -> dict:
     """This is the :func:`main()` method for all apps/applets required by DNANexus.
 
     This applet is a fairly simple wrapper around bcftools. For each vcf.gz file provided to `input_vcfs` it:
@@ -356,112 +401,49 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_na
     :param output_name: A prefix to use for output files
     :param human_reference_index: Location of the human reference file in dxlink format
     :param human_reference: Location of the human reference file index in dxlink format
-    :param testing_script: Script compatible with pytest. If not null, invoke the bcfsplitter testing suite
-        via :func:`test`.
-    :param testing_directory: Directory containing test files if in testing mode.
     :return: A dictionary of outputs as specified by dxapp.json
     """
 
-    if testing_script:
-        LOGGER.info('Testing mode activated...')
-        if testing_directory is None:
-            raise ValueError(f'Testing mode invoked but -itesting_directory not provided!')
+    # Run through each VCF file provided and perform filtering.
+    # input_vcfs is a file list of DNANexus file hashes that I dereference below
+    input_vcfs = dxpy.DXFile(input_vcfs['$dnanexus_link'])
+    dxpy.download_dxfile(input_vcfs.get_id(), 'vcf_list.txt')  # Actually download the file
 
-        output = test(input_vcfs, testing_script, testing_directory)
-    else:
+    ingest_human_reference(human_reference, human_reference_index)
 
-        # Run through each VCF file provided and perform filtering.
-        # input_vcfs is a file list of DNANexus file hashes that I dereference below
-        input_vcfs = dxpy.DXFile(input_vcfs['$dnanexus_link'])
-        dxpy.download_dxfile(input_vcfs.get_id(), 'vcf_list.txt')  # Actually download the file
+    # Use thread utility to multi-thread this process:
+    thread_utility = ThreadUtility(thread_factor=8,
+                                   error_message='A splitting thread failed',
+                                   incrementor=5)
 
-        ingest_human_reference(human_reference, human_reference_index)
+    # And launch individual jobs
+    n_vcfs = 0
+    with Path('vcf_list.txt').open('r') as input_vcf_reader:
+        for line in input_vcf_reader:
+            n_vcfs += 1
+            input_vcf = line.rstrip()
+            thread_utility.launch_job(process_vcf,
+                                      input_vcf=input_vcf,
+                                      chunk_size=chunk_size,
+                                      alt_allele_threshold=alt_allele_threshold)
 
-        # Use thread utility to multi-thread this process:
-        thread_utility = ThreadUtility(thread_factor=8,
-                                       error_message='A splitting thread failed',
-                                       incrementor=5)
+    bcf_files = []
+    infos = []
+    skipped_sites = []
+    for result in thread_utility:
+        files, info, skipped = result
+        bcf_files.extend(files)
+        infos.append(info)
+        skipped_sites.extend(skipped)
 
-        # And launch individual jobs
-        n_vcfs = 0
-        with Path('vcf_list.txt').open('r') as input_vcf_reader:
-            for line in input_vcf_reader:
-                n_vcfs += 1
-                input_vcf = line.rstrip()
-                thread_utility.launch_job(process_vcf,
-                                          input_vcf=input_vcf,
-                                          chunk_size=chunk_size,
-                                          alt_allele_threshold=alt_allele_threshold)
+    split_info_path, skipped_sites_path = write_information_files(output_name, n_vcfs, infos, skipped_sites)
 
-        bcf_files = []
-        output_name = f'.{output_name}.' if output_name else '.'
-        split_info_path = Path(f'vcf_info{output_name}tsv')
-        skipped_sites_path = Path(f'skipped_sites{output_name}tsv')
-        size_zero_bcf_count = 0
-        with split_info_path.open('w') as split_info_file, \
-                skipped_sites_path.open('w') as skipped_sites_file:
-            split_info_csv = csv.DictWriter(split_info_file,
-                                            fieldnames=['vcf', 'dxid', 'n_sites', 'n_final_sites', 'vcf_size'],
-                                            delimiter='\t')
-            split_info_csv.writeheader()
-
-            skipped_sites_csv = csv.DictWriter(skipped_sites_file,
-                                               fieldnames=['vcf', 'chrom', 'pos', 'alts', 'acs'],
-                                               delimiter='\t')
-            skipped_sites_csv.writeheader()
-
-            for result in thread_utility:
-                files, info, skipped_sites = result
-                bcf_files.extend(files)
-                if info['n_sites'] == 0:
-                    size_zero_bcf_count += 1
-                split_info_csv.writerow(info)
-                for site in skipped_sites:
-                    site['vcf'] = info['vcf']
-                skipped_sites_csv.writerows(skipped_sites)
-
-        LOGGER.info(f'Number of VCFs with 0 sites: {size_zero_bcf_count} '
-                    f'({(size_zero_bcf_count / n_vcfs) * 100:0.2f}%)')
-
-        # Set output
-        output = {'output_vcfs': [dxpy.dxlink(item) for item in bcf_files],
-                  'run_info': dxpy.dxlink(generate_linked_dx_file(split_info_path)),
-                  'skipped_sites': dxpy.dxlink(generate_linked_dx_file(skipped_sites_path))}
+    # Set output
+    output = {'output_vcfs': [dxpy.dxlink(item) for item in bcf_files],
+              'run_info': dxpy.dxlink(generate_linked_dx_file(split_info_path)),
+              'skipped_sites': dxpy.dxlink(generate_linked_dx_file(skipped_sites_path))}
 
     return output
-
-
-def test(input_vcfs: dict, testing_script: dict, testing_directory: str) -> Dict:
-    """Run the bcfsplitter testing suite.
-
-    This method is invisible to the applet and can only be accessed by using API calls via dxpy.DXApplet() on
-    a local machine. See the resources in the `./test/` folder for more information on running tests.
-
-    :param input_vcfs: A DNANexus file-id (file-12345...) pointing to a list-file containing DNANexus file-ids
-        (file-12345...) to split into smaller chunks.
-    :param testing_script: Script compatible with pytest. If not null, invoke the bcfsplitter testing suite
-        via :func:`test`.
-    :param testing_directory: Directory containing test files if in testing mode.
-    :return:
-    """
-
-    LOGGER.info('Launching mrcepid-filterbcf with the testing suite')
-    dxpy.download_dxfile(dxid=testing_script['$dnanexus_link'], filename='test.py')
-
-    # I then set an environment variable that tells pytest where the testing directory is
-    os.environ['CI'] = '500'  # Make sure pytest logs aren't truncated
-    os.environ['TEST_DIR'] = testing_directory
-    LOGGER.info(f'TEST_DIR environment variable set: {os.getenv("TEST_DIR")}')
-    os.environ['INPUT_VCFS'] = input_vcfs['$dnanexus_link']
-    LOGGER.info(f'INPUT_VCFS environment variable set: {os.getenv("BGEN_INDEX")}')
-
-    out_log = Path(f'pytest.log')
-    try:
-        CMD_EXEC.run_cmd('pytest test.py', stdout_file=out_log)
-    except RuntimeError:
-        pass
-
-    return {}
 
 
 if __name__ == '__main__':
