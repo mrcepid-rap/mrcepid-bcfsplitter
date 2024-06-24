@@ -240,7 +240,6 @@ def split_sites(filtered_sites_file: Path, n_lines: int, chunk_size: int) -> Lis
                     current_index_num += 1
                     current_index_path = replace_multi_suffix(filtered_sites_file,
                                                               f'.chunk{current_index_num}')
-                    print(current_index_path)
                     current_index_writer = current_index_path.open('w')
 
             # Don't write duplicate positions as BCFTools can only process on position rather than position / ref / alt
@@ -342,8 +341,6 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int) -> T
 
         # 6. And actually split the files into chunks:
         split_files = split_bcfs(norm_bcf, file_chunk_paths)
-
-        vcf_path.unlink()
         final_files = [generate_linked_dx_file(file) for file in split_files]
 
     return final_files, log_info, failed_sites
