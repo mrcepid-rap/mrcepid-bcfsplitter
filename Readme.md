@@ -20,6 +20,7 @@ https://documentation.dnanexus.com/.
   * [Outputs](#outputs)
   * [Command line example](#command-line-example)
   * [VM Resources](#vm-resources)
+- [Running Tests](#running-tests)
 
 ## Introduction
 
@@ -142,8 +143,6 @@ case this error is ever encountered again.
 | alt_allele_threshold  | True     | 99,999                                                         | The maximum number of alternate alleles in a single variant before filtering a site. Uses '>' (greater than) to determine threshold.                                                                  |
 | human_reference       | True     | project-Fx2x0fQJ06KfqV7Y3fFZq1jp:file-Fx2x270Jx0j17zkb3kbBf6q2 | dxfile / path pointing to the reference genome the provided VCFs are aligned to                                                                                                                       |
 | human_reference_index | True     | project-Fx2x0fQJ06KfqV7Y3fFZq1jp:file-Fx2x21QJ06f47gV73kZPjkQQ | dxfile / path pointing to the reference genome index (.fai) the provided VCFs are aligned to                                                                                                          |
-| testing_script        | True     | None                                                           | Invoke the bcfsplitter test suite by providing a script compatible with the 'pytest' module. DO NOT use this flag unless you know what you are doing! See `Readme.developer.md` for more information. |
-| testing_directory     | True     | None                                                           | Directory name containing test files. DO NOT use this flag unless you know what you are doing! See `Readme.developer.md` for more information.                                                        |
 
 The format of the input_vcfs file is as follows:
 
@@ -256,3 +255,7 @@ had good results on low priority with 18 VCFs / job. This strikes a reasonable b
 building this applet.
 
 If necessary to adjust compute resources, one can provide a flag like `--instance-type mem1_ssd1_v2_x36`.
+
+# Running Tests
+
+Please see `Readme.developer.md` for information on setting up and running tests.
