@@ -1,9 +1,9 @@
 {
   "name": "mrcepid-bcfsplitter",
   "title": "BCFSplitter",
-  "summary": "Splits a VCF into a BCF",
+  "summary": "Normalises and splits a VCF into smaller BCFs",
   "dxapi": "1.0.0",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "inputSpec": [
     {
       "name": "input_vcfs",

@@ -4,10 +4,10 @@
 # Prior to using this script PLEASE follow the instructions in the developer readme (Readme.developer.md) carefully.
 # This Readme provides instructions on how to regenerate testing data necessary to run these tests.
 import csv
+import pytest
+
 from pathlib import Path
 from typing import Optional
-
-import pytest
 from pysam import VariantFile
 
 from general_utilities.job_management.command_executor import DockerMount, CommandExecutor

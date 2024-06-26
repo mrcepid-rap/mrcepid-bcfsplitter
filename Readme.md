@@ -55,6 +55,8 @@ dx describe file-1234567890ABCDEFGHIJKLMN
   * Several quality-of-life changes to the codebase to improve readability and maintainability
   * Implemented newer version of `general_utilities`
   * Added docstrings to all functions
+  * Implemented tests – please see `Readme.developer.md` for more information.
+  * Fixed a bug where star alleles could result in an unexpected number of variants in a split bcf file
 
 * v1.0.0
   * Initial numbered release, see git logs for previous changes.

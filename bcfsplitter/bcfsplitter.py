@@ -7,7 +7,6 @@
 # DNAnexus Python Bindings (dxpy) documentation:
 #   http://autodoc.dnanexus.com/bindings/python/current/
 
-import os
 import csv
 import dxpy
 import logging

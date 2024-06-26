@@ -19,7 +19,7 @@ developers.
 
 ## Required external files
 
-Tests require a human reference genome. This file is too big to store in the repo. Please download it from DNANexus / external site:
+1. Tests require a human reference genome. This file is too big to store in the repo. Please download it from DNANexus / external site:
 
 ```bash
 cd test/test_data/
@@ -31,8 +31,9 @@ dx download file-Fx2x21QJ06f47gV73kZPjkQQ
 mv hs38DH.fa.gz reference.fasta.gz 
 gunzip reference.fasta.gz 
 mv hs38DH.fa.fai reference.fasta.fai
-
 ```
+
+2. Tests will require the `egardner413:mrcepid-burdentesting` Docker image to be available on the platform. This is required to run external system calls (e.g., `bcftools`)
 
 ## Running tests
 
