@@ -1,9 +1,9 @@
 {
   "name": "mrcepid-bcfsplitter",
   "title": "BCFSplitter",
-  "summary": "Splits a VCF into a BCF",
+  "summary": "Normalises and splits a VCF into smaller BCFs",
   "dxapi": "1.0.0",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "inputSpec": [
     {
       "name": "input_vcfs",
@@ -13,7 +13,57 @@
       "patterns": [
         "*.txt"
       ],
-      "help": "List of input VCF files from mrcepid-filterbcf."
+      "help": "List of input VCF files to split."
+    },
+    {
+      "name": "chunk_size",
+      "label": "number of variants per split output .bcf",
+      "class": "int",
+      "optional": true,
+      "default": 5000,
+      "help": "The number of variants to include per-output BCF produced by this applet. See README for how this works in practice [5000]."
+    },
+    {
+      "name": "output_name",
+      "label": "Output name for info files",
+      "class": "string",
+      "optional": true,
+      "default": null,
+      "help": "Additional string to use when creating information files (run info, skipped_sites). This does NOT modify the name of split VCF files [None]."
+    },
+    {
+      "name": "alt_allele_threshold",
+      "label": "alt allele filtering threshold",
+      "class": "int",
+      "optional": true,
+      "default": 99999,
+      "help": "The maximum number of alternate alleles in a single variant before filtering a site. Uses '>' (greater than) to determine threshold [99999]."
+    },
+    {
+      "name": "human_reference",
+      "label": "Human reference genome",
+      "class": "file",
+      "optional": true,
+      "help": "GRCh38 human reference genome",
+      "default": {
+        "$dnanexus_link": {
+          "project": "project-Fx2x0fQJ06KfqV7Y3fFZq1jp",
+          "id": "file-Fx2x270Jx0j17zkb3kbBf6q2"
+        }
+      }
+    },
+    {
+      "name": "human_reference_index",
+      "label": "Human reference genome .fai index",
+      "class": "file",
+      "optional": true,
+      "help": "GRCh38 human reference genome .fai index",
+      "default": {
+        "$dnanexus_link": {
+          "project": "project-Fx2x0fQJ06KfqV7Y3fFZq1jp",
+          "id": "file-Fx2x21QJ06f47gV73kZPjkQQ"
+        }
+      }
     }
   ],
   "outputSpec": [
@@ -21,46 +71,69 @@
       "name": "output_vcfs",
       "label": "Output filtered vcf",
       "class": "array:file",
-      "optional": false,
+      "optional": true,
       "patterns": [
         "*.vcf.gz"
       ],
       "help": "Output VCF(s)"
+    },
+    {
+      "name": "run_info",
+      "label": "Split file information",
+      "class": "file",
+      "optional": false,
+      "patterns": [
+        "vcf_info.*.tsv"
+      ],
+      "help": "Information about each processed file"
+    },
+    {
+      "name": "skipped_sites",
+      "label": "Sites skipped due to alt_allele_threshold input parameter",
+      "class": "file",
+      "optional": false,
+      "patterns": [
+        "skipped_sites.*.tsv"
+      ],
+      "help": "A .tsv file containing sites with > alt_allele_threshold alternate alleles."
     }
   ],
-  "access": {
-    "network": [
-      "*"
-    ],
-    "project": "CONTRIBUTE",
-    "allProjects": "VIEW"
-  },
   "runSpec": {
     "timeoutPolicy": {
       "*": {
-        "hours": 12
+        "hours": 6
       }
     },
     "interpreter": "python3",
-    "file": "src/mrcepid-bcfsplitter.py",
+    "file": "bcfsplitter/bcfsplitter.py",
     "distribution": "Ubuntu",
     "release": "20.04",
     "version": "0",
+    "executionPolicy": {
+      "restartOn": {
+        "*": 0
+      }
+    },
+    "assetDepends": [],
     "execDepends": [
       {
         "name": "general_utilities",
         "package_manager": "git",
         "url":  "https://github.com/mrcepid-rap/general_utilities.git",
-        "tag": "v1.2.2",
+        "tag": "v1.5.1",
         "build_commands": "pip3 install ."
       }
     ]
+  },
+  "access": {
+    "network": ["*"],
+    "allProjects": "VIEW"
   },
   "regionalOptions": {
     "aws:eu-west-2": {
       "systemRequirements": {
         "*": {
-          "instanceType": "mem2_ssd1_v2_x64"
+          "instanceType": "mem1_ssd1_v2_x72"
         }
       }
     }

@@ -7,6 +7,7 @@ https://documentation.dnanexus.com/.
 ### Table of Contents
 
 - [Introduction](#introduction)
+  * [Changelog](#changelog)
   * [Background](#background)
   * [Dependencies](#dependencies)
     + [Docker](#docker)
@@ -14,10 +15,12 @@ https://documentation.dnanexus.com/.
 - [Methodology](#methodology)
 - [Running on DNANexus](#running-on-dnanexus)
   * [Inputs](#inputs)
+    + [Generating an Input VCF list](#generating-an-input-vcf-list)
+    + [Alt Allele Threshold](#alt-allele-threshold)
   * [Outputs](#outputs)
   * [Command line example](#command-line-example)
-    + [Batch Running](#batch-running)
-
+  * [VM Resources](#vm-resources)
+- [Running Tests](#running-tests)
 
 ## Introduction
 
@@ -38,12 +41,34 @@ dx describe file-1234567890ABCDEFGHIJKLMN
 
 **Note:** This README pertains to data included as part of the DNANexus project "MRC - Variant Filtering" (project-G2XK5zjJXk83yZ598Z7BpGPk)
 
+### Changelog
+
+* v2.0.0
+  * Added support for WGS data. This comes with several changes under-the-hood to support issues with the larger WGS data. These changes will not effect processing of WES data, but please see below for specific changes:
+    * Modified standard number of CPUs per-vcf to 8. We have done extensive testing to ensure that the process is $O(n^2)$ in terms of CPU usage – e.g., 2 CPUs = 60m / VCF, 4 CPUs = 30m / VCF
+    * Fixed an issue with sites with large number of alternate alleles.
+      * Issue can lead to excessive memory requirements when processing some VCFs.
+      * We have added a method to filter sites with excessive alternate alleles, which can be triggered using the `alt_allele_threshold` parameter.
+      * This parameter is set to 99999 by default, so will not affect WES processing
+      * We recommend a setting of 15 when analysing WGS data
+      * All sites that are filtered will be reported in the `skipped_sites.{output_name}.tsv`
+  * Several quality-of-life changes to the codebase to improve readability and maintainability
+  * Implemented newer version of `general_utilities`
+  * Added docstrings to all functions
+  * Implemented tests – please see `Readme.developer.md` for more information.
+  * Fixed a bug where star alleles could result in an unexpected number of variants in a split bcf file
+
+* v1.0.0
+  * Initial numbered release, see git logs for previous changes.
+
 ### Background
 
-UKBiobank provides a total of 977 individual .vcf.gz files (located at `Bulk/Exome sequences/Population level exome OQFE variants, pVCF format - final release/*.vcf.gz`).
-This is the same number as for the 200k release despite the sample size increased by ~2.5x. As such, pipelines designed to
-work on the 200k data no longer work as efficiently; we wrote this tool to split provided vcf.gz files into
-smaller chunks.
+UKBiobank provides individual .vcf.gz files. This is the same number as for the 200k release despite the sample size 
+increased by ~2.5x. As such, pipelines designed to work on the 200k data no longer work as efficiently; we wrote 
+this tool to split provided vcf.gz files into smaller chunks. Default file locations on the RAP are as follows:
+
+* WES: `/Bulk/Exome sequences/Population level exome OQFE variants, pVCF format - final release/`
+* WGS: `/Bulk/DRAGEN WGS/Whole genome variant call files (GVCFs) (DRAGEN) [500k release]/`
 
 ### Dependencies
 
@@ -60,14 +85,18 @@ to be installed manually. For more details on how to build a Docker image for us
 
 https://github.com/mrcepid-rap#docker-images
 
+or 
+
+https://github.com/mrcepid-rap/dockerimages
+
 In brief, the primary **bioinformatics software** dependencies required by this Applet (and provided in the associated Docker image)
 are:
 
 * [htslib and samtools](http://www.htslib.org/)
 * [bcftools](https://samtools.github.io/bcftools/bcftools.html)
 
-This list is not exhaustive and does not include dependencies of dependencies and software needed
-to acquire other resources (e.g. wget). See the referenced Dockerfile for more information.
+This list is not exhaustive and does not include dependencies of dependencies and software needed to acquire other 
+resources (e.g. wget). See the referenced Dockerfile for more information.
 
 #### Resource Files
 
@@ -75,21 +104,22 @@ This applet does not have any external dependencies.
 
 ## Methodology
 
-This applet is step 1 (mrc-splitbcf) of the rare variant testing pipeline developed by Eugene Gardner for the UKBiobank
-RAP:
+This applet is step 1 (mrcepid-splitbcf) of the rare variant testing pipeline developed by Eugene Gardner for the 
+UKBiobank RAP:
 
 ![](https://github.com/mrcepid-rap/.github/blob/main/images/RAPPipeline.v3.png)
 
 This applet has three major steps:
 
 1. Generate a list of all variants by chromosome/coordinate in a single vcf file
-2. Split this list into smaller chunks (~5000 variants each)
-3. Extract variants for each of these chunks into a separate file.
+   2. If required & requested, filter out sites with excessive alternate alleles
+2. Normalise and left correct VCFs, while removing sites with excessive alternate alleles if requested
+3. Split this list into smaller chunks, by default (see `chunk_size` parameter) ~5000 variants each
+4. Extract variants for each of these chunks into a separate file.
 
-In brief, each vcf file is split into roughly 5000-line chunks. However, a split bcf file can have no fewer than 2500 
-sites and no more than 7500 sites. In practice, this results in most original vcf.gz files being split into between 4-5 
-smaller .bcfs. Note that this is the _ONLY_ part of the pipeline that I have not parallelized. This was because I did 
-this analysis prior to deciding to parallelize all other parts of the codebase.
+In brief, each vcf file is split into roughly 5000-line chunks by default. However, a split bcf file cannot have 
+< `chunk_size` / 2 sites or > `chunk_size` + (`chunk_size` / 2) sites. In practice, and for WES data, this results in
+most original vcf.gz files being split into between 4-5 smaller .bcfs.
 
 **BIG Note** There is a fix implemented in this pipeline that solves a previous bug that would duplicate a site if both
 of the following were true:
@@ -107,28 +137,81 @@ case this error is ever encountered again.
 
 ### Inputs
 
-| input      | description                                     |
-|------------|-------------------------------------------------|
-| input_vcfs | List of raw input vcf.gz file(s) from DNA Nexus |
+| input                 | Optional | Default                                                        | description                                                                                                                                                                                           |
+|-----------------------|----------|----------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| input_vcfs            | False    | N/A                                                            | List of raw input vcf.gz file(s) from DNA Nexus                                                                                                                                                       |
+| chunk_size            | True     | 5000                                                           | The number of variants to include per-output BCF produced by this applet.                                                                                                                             |
+| output_name           | True     | None                                                           | Additional string to use when creating information files (run info, skipped_sites). This does NOT modify the name of split VCF files.                                                                 |
+| alt_allele_threshold  | True     | 99,999                                                         | The maximum number of alternate alleles in a single variant before filtering a site. Uses '>' (greater than) to determine threshold.                                                                  |
+| human_reference       | True     | project-Fx2x0fQJ06KfqV7Y3fFZq1jp:file-Fx2x270Jx0j17zkb3kbBf6q2 | dxfile / path pointing to the reference genome the provided VCFs are aligned to                                                                                                                       |
+| human_reference_index | True     | project-Fx2x0fQJ06KfqV7Y3fFZq1jp:file-Fx2x21QJ06f47gV73kZPjkQQ | dxfile / path pointing to the reference genome index (.fai) the provided VCFs are aligned to                                                                                                          |
 
 The format of the input_vcfs file is as follows:
 
 ```text
-file-1234567890ABCDE
+file-1234567890ABCDEFGHIJ
+file-ABCDEFGHIJ1234567890
+file-0987654321JIHGFEDCBA
+file-JIHGFEDCBA0987654321
 ```
 
-Where `file-1234567890ABCDE` is the DNANexus file ID for a unprocessed vcf file.
+Where `file-1234567890ABCDEEFGHIJ` is the DNANexus file ID for an unprocessed vcf file.
+
+#### Generating an Input VCF List
+
+Please find an example (for WES data) of generating the input list(s) for the `input_vcfs` parameter below:
+
+```shell
+# 1. get a list of all VCFs
+dx ls -l 'Bulk/Exome sequences/Population level exome OQFE variants, pVCF format - final release/ukb23157*.vcf.gz' | perl -ane 'chomp $_; if ($F[6] =~ /^\((\S+)\)$/) {$id = $1; $F[5] =~ s/.vcf.gz//; print "$F[5]\t$id\n";}' > bcf_list.txt 
+
+# 2. Split to a manageble per-size job:
+split -l 18 -d ../bcfsplitter_input.lst splitjob_
+
+# 3. Upload to DNAnexus
+dx upload splitjob_* --destination batch_files/
+```
+
+**Note**: `-l 18` is used above to ensure that all CPUs on the default instance type are used. Please see 
+[VM Resources](#vm-resources) for more information on why this parameter was used as an example.
+
+#### Alt Allele Threshold
+
+The `alt_allele_threshold` parameter is used to filter out sites with excessive alternate alleles. When using this tool 
+with WGS data, we suggest using a value of `15`. We have optimised this parameter to allow for the applet to function 
+on a `mem1_ssd1` instance type (`c5d` family on AWS). This is to use low memory machines, which are not typicaly in
+[demand on AWS](https://aws.amazon.com/ec2/spot/instance-advisor/). Thus, one can often use low priority on DNANexus
+to save costs.
 
 ### Outputs
 
-| output      | description                                                                  |
-|-------------|------------------------------------------------------------------------------|
-| output_vcfs | All .bcf chunks from the resulting split of all files listed in `input_vcfs` |
+| output        | description                                                                                                                      |
+|---------------|----------------------------------------------------------------------------------------------------------------------------------|
+| output_vcfs   | All .bcf chunks from the resulting split of all files listed in `input_vcfs`                                                     |
+| run_info      | Summary statistics for the each VCF file split as part of this process. Will be named like `vcf_info.{output_name}.tsv`          |
+| skipped_sites | A .tsv file containing sites with > alt_allele_threshold alternate alleles. Will be named like `skipped_sites.{output_name}.tsv` |
 
 output_vcfs is named based on the original file name of the vcf in `input_vcfs` with an additional 'chunk' identifier 
 like:
 
 `ukb23157_c1_b0_v1_chunkN.bcf`
+
+run_info contains the following columns:
+
+    vcf: The original vcf file
+    dxid: The dxid of the original vcf file
+    n_sites: Number of sites found in the original file
+    n_final_sites: Number of sites after filtering for alt_allele_threshold
+    norm_n_alts: Number of alternate alleles found in the normalised file – this SHOULD equal n_norm_sites
+    vcf_size: Size of the original vcf file in bytes
+
+skipped_sites contains the following columns:
+  
+    vcf: The original vcf file
+    chrom: Chromosome of the site
+    pos: Position of the site
+    alts: Alternate alleles with MAF ~> 0.1% as a comma-separated list
+    acs: Allele counts for each alternate allele listed in 'alts' as a comma-separated list
 
 ### Command line example
 
@@ -137,31 +220,16 @@ organisational documentation on how to download and build this app on the DNANex
 
 https://github.com/mrcepid-rap
 
-Running this command is fairly straightforward using the DNANexus SDK toolkit. First generate a list of all VCFs to process
-using commands like the following:
-
-```shell
-# 1. get a list of the initial VCF
-dx ls -l 'Bulk/Exome sequences/Population level exome OQFE variants, pVCF format - final release/ukb23157*.vcf.gz' | perl -ane 'chomp $_; if ($F[6] =~ /^\((\S+)\)$/) {$id = $1; $F[5] =~ s/.vcf.gz//; print "$F[5]\t$id\n";}' > bcf_list.txt 
-
-# 2. get a concurrent list of the indicies:
-dx ls -l 'Bulk/Exome sequences/Population level exome OQFE variants, pVCF format - final release/ukb23157*.vcf.gz.tbi' | perl -ane 'chomp $_; if ($F[6] =~ /^\((\S+)\)$/) {$id = $1; $F[5] =~ s/.vcf.gz.tbi//; print "$F[5]\t$id\n";}' > idx_list.txt```
-
-# 3. Match the two lists using a custom script (not included in this repo):
-matcher.pl -file1 bcf_list.txt -file2 idx_list.txt -r | perl -ane 'chomp $_; print "$F[3]\t$F[1]\n";' > bcfsplitter_input.lst
-
-# 4. Split to a manageble per-size job:
-split -l 15 -d ../bcfsplitter_input.lst splitjob_
-
-# 5. Upload to DNAnexus
-dx upload splitjob_* --destination batch_files/
-```
-
 For the input vcf (provided with the flag `-iinput_vcf`) one can use a file hash from one of the above files:
 
 ```shell
+# 1. WES example: 
 dx run mrcepid-bcfsplitter --priority low --destination filtered_vcfs/ \ 
-        -iinput_vcfs=file-1234567890ABCDE
+        -iinput_vcfs=file-1234567890ABCDE -ioutput_name=list1
+        
+# 2. WGS example:
+dx run mrcepid-bcfsplitter --priority low --destination filtered_vcfs/ \ 
+        -iinput_vcfs=file-1234567890ABCDE -ioutput_name=list1 -ialt_allele_threshold=15 -ichunk_size=2500
 ```
 
 Brief I/O information can also be retrieved on the command line:
@@ -170,6 +238,26 @@ Brief I/O information can also be retrieved on the command line:
 dx run mrcepid-bcfsplitter --help
 ```
 
-I have set a sensible (and tested) default for compute resources on DNANexus that is baked into the json used for building 
-the app (at `dxapp.json`) so setting an instance type is unnecessary. This current default is for a mem2_ssd1_v2_x64 instance
-(64 CPUs, 256 Gb RAM). If necessary to adjust compute resources, one can provide a flag like `--instance-type mem1_ssd1_v2_x4`.
+### VM Resources
+
+Sensible (and tested) defaults for compute resources on DNANexus that is baked into the json used for building 
+the app (at `dxapp.json`). The current default is for a mem1_ssd1_v2_x72 instance (72 CPUs, 144 Gb RAM). This machine
+is typically not in high demand on AWS and should allow for jobs to run on low priority. If this machine does 
+appear to be in high demand, switch to another instance type in the c5d family of machines (mem1_ssd1 on DNANexus).
+
+Each VCF requires 8 CPUs to run. Thus, when determining the number of VCFs to run per job, one should take the number
+of CPUs available on the machine and divide by 8. For example, since the default machine has 72 CPUs, one should run a 
+multiple of 9 VCFs per job (e.g., 9, 18, 27, 36, ...). Note that runtime is roughly linear. Thus, if you have 18 VCFs, 
+you should expect the job to take double the time of a job with 9 VCFs. This is important to consider when using low 
+priority as the longer a job runs, the more likely it is to be interrupted. Using the default instance type, we have 
+had good results on low priority with 18 VCFs / job. This strikes a reasonable balance between number of jobs to monitor
+(DNANexus is limited to 100 jobs / user) and the likelihood of using low priority.
+
+**Note:** If running more than 18 files / job, you may need to adjust the timeoutPolicy parameter in `dxapp.json` when
+building this applet.
+
+If necessary to adjust compute resources, one can provide a flag like `--instance-type mem1_ssd1_v2_x36`.
+
+# Running Tests
+
+Please see `Readme.developer.md` for information on setting up and running tests.

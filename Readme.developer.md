@@ -1,31 +1,47 @@
 # mrcepid-filterbcf Developer Readme
 
-<!--
-TODO: Please edit this Readme.developer.md file to include information
-for developers or advanced users, for example:
+What this tests: Function-level tests for the `bcfsplitter` applet.
 
-* Information about app internals and implementation details
-* How to report bugs or contribute to development
--->
+What this does not test: End-to-end tests for the `bcfsplitter` applet. Always make sure to run the applet on the DNAnexus platform before deploying it!
 
-## Running this app with additional computational resources
+## Test Data Generation
 
-This app has the following entry points:
+We generated a test VCF file for this applet from the 1000 Genomes Phase 3 Data. We used the following commands:
 
-* main
+```bash
+bcftools view -Oz https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20201028_3202_raw_GT_with_annot/20201028_CCDG_14151_B01_GRM_WGS_2020-08-0
+5_chr7.recalibrated_variants.vcf.gz "chr7:100679507-100694250" > test_input.vcf.gz
+```
 
-When running this app, you can override the instance type to be used by
-providing the ``systemRequirements`` field to ```/applet-XXXX/run``` or
-```/app-XXXX/run```, as follows:
+**Note**: To avoid clogging the test directory with temporary files, we use a tmp_dir from pytest. This means that file 
+paths in the testing script are a bit _weird_. Do not modify these paths unless you know what you are doing or ask the 
+developers.
 
-    {
-      systemRequirements: {
-        "main": {"instanceType": "mem2_hdd2_x2"}
-      },
-      [...]
-    }
+## Required external files
 
-See <a
-href="https://documentation.dnanexus.com/developer/api/running-analyses/io-and-run-specifications#run-specification">Run
-Specification</a> in the API documentation for more information about the
-available instance types.
+1. Tests require a human reference genome. This file is too big to store in the repo. Please download it from DNANexus / external site:
+
+```bash
+cd test/test_data/
+# .fa
+dx download file-Fx2x270Jx0j17zkb3kbBf6q2
+# .fai
+dx download file-Fx2x21QJ06f47gV73kZPjkQQ
+
+mv hs38DH.fa.gz reference.fasta.gz 
+gunzip reference.fasta.gz 
+mv hs38DH.fa.fai reference.fasta.fai
+```
+
+2. Tests will require the `egardner413:mrcepid-burdentesting` Docker image to be available on the platform. This is required to run external system calls (e.g., `bcftools`)
+
+## Running tests
+
+I use pycharm to run tests through a GUI – but if required to run on the command line, make sure you are in the `test/' 
+directory and run:
+
+```bash
+pytest bcfsplitter_test.py
+```
+
+You will need to ensure the `bcfsplitter` module and `general_utilities` are properly installed and in your python path. 
