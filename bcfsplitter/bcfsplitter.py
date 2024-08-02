@@ -346,7 +346,7 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int) -> T
 
 
 def write_information_files(output_name: Optional[str], n_vcfs: int, infos: List[Dict],
-                            skipped_sites: List[Dict], output_dir: Path = Path('./')) -> Tuple[Path, Path]:
+                            skipped_sites: List[List[Dict]], output_dir: Path = Path('./')) -> Tuple[Path, Path]:
 
     output_name = f'.{output_name}.' if output_name else '.'
     split_info_path = output_dir / f'vcf_info{output_name}tsv'
@@ -364,13 +364,17 @@ def write_information_files(output_name: Optional[str], n_vcfs: int, infos: List
                                            delimiter='\t')
         skipped_sites_csv.writeheader()
 
-        for info, skipped in zip(infos, skipped_sites):
+        if len(infos) != len(skipped_sites):
+            raise ValueError('Length of infos and skipped_sites do not match!')
+
+        # To future devs: zip does not work here, and I'm too much of a n00b to understand why
+        for n_vcf, info in enumerate(infos):
             if info['n_sites'] == 0:
                 size_zero_bcf_count += 1
             split_info_csv.writerow(info)
-            for site in skipped_sites:
+            for site in skipped_sites[n_vcf]:
                 site['vcf'] = info['vcf']
-            skipped_sites_csv.writerows(skipped_sites)
+            skipped_sites_csv.writerows(skipped_sites[n_vcf])
 
     LOGGER.info(f'Number of VCFs with 0 sites: {size_zero_bcf_count} '
                 f'({(size_zero_bcf_count / n_vcfs) * 100:0.2f}%)')
@@ -430,7 +434,7 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_na
         files, info, skipped = result
         bcf_files.extend(files)
         infos.append(info)
-        skipped_sites.extend(skipped)
+        skipped_sites.append(skipped)
 
     split_info_path, skipped_sites_path = write_information_files(output_name, n_vcfs, infos, skipped_sites)
 

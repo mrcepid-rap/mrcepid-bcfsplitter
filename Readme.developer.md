@@ -6,11 +6,13 @@ What this does not test: End-to-end tests for the `bcfsplitter` applet. Always m
 
 ## Test Data Generation
 
-We generated a test VCF file for this applet from the 1000 Genomes Phase 3 Data. We used the following commands:
+We generated test VCF files for this applet from the 1000 Genomes Phase 3 Data. We used the following commands:
 
 ```bash
-bcftools view -Oz https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20201028_3202_raw_GT_with_annot/20201028_CCDG_14151_B01_GRM_WGS_2020-08-0
-5_chr7.recalibrated_variants.vcf.gz "chr7:100679507-100694250" > test_input.vcf.gz
+bcftools view -Oz https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20201028_3202_raw_GT_with_annot/20201028_CCDG_14151_B01_GRM_WGS_2020-08-05_chr7.recalibrated_variants.vcf.gz "chr7:100679507-100694250" > test_input1.vcf.gz
+bcftools view -Oz https://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20201028_3202_raw_GT_with_annot/20201028_CCDG_14151_B01_GRM_WGS_2020-08-05_chr13.recalibrated_variants.vcf.gz "chr13:36432495-36442870" > test_input2.vcf.gz
+bcftools index -t test_input1.vcf.gz
+bcftools index -t test_input2.vcf.gz
 ```
 
 **Note**: To avoid clogging the test directory with temporary files, we use a tmp_dir from pytest. This means that file 
@@ -45,3 +47,6 @@ pytest bcfsplitter_test.py
 ```
 
 You will need to ensure the `bcfsplitter` module and `general_utilities` are properly installed and in your python path. 
+
+**Note**: Due to the use of temporary directories, the tests may fail with a 'Failed to read' error. This typically 
+means that the old file is still in use. If this happens, simply re-run the tests.
