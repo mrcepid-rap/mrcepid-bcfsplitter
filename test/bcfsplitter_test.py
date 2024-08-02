@@ -6,73 +6,99 @@
 import csv
 import pytest
 
+from time import sleep
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List, Tuple
 from pysam import VariantFile
 
+from general_utilities.association_resources import replace_multi_suffix
 from general_utilities.job_management.command_executor import DockerMount, CommandExecutor
 from bcfsplitter.bcfsplitter import generate_site_tsv, count_variant_list_and_filter, normalise_and_left_correct, \
     split_sites, split_bcfs, write_information_files
 
 test_data_dir = Path(__file__).parent / 'test_data'
 
-test_vcf = test_data_dir / 'test_input.vcf.gz'
-test_idx = test_data_dir / 'test_input.vcf.gz.tbi'
+EXPECTED_VCF_VALUES = [{'final': 845, 'missing': 6, 'original': 835,
+                        'vcf': test_data_dir / 'test_input1.vcf.gz',
+                        'index': test_data_dir / 'test_input1.vcf.gz.tbi'},
+                       {'final': 417, 'missing': 32, 'original': 410,
+                        'vcf': test_data_dir / 'test_input2.vcf.gz',
+                        'index': test_data_dir / 'test_input2.vcf.gz.tbi'}]
+
 test_ref = test_data_dir / 'reference.fasta'
 test_fai = test_data_dir / 'reference.fasta.fai'
-test_vcf_len = 835
 
-assert test_vcf.exists()
-assert test_idx.exists()
+for vcf_data in EXPECTED_VCF_VALUES:
+
+    assert vcf_data['vcf'].exists()
+    assert vcf_data['index'].exists()
+
 assert test_ref.exists()
 assert test_fai.exists()
 
 
 @pytest.fixture(scope='function')
-def tmp_vcf_file(tmp_path_factory) -> Path:
-    """Is a fixture to move testing files into a tmp_dir so tests do not clutter the test_data directory.
+def tmp_data_dir(tmp_path_factory) -> Path:
+    """Is a fixture to create a tmp_dir so tests do not clutter the test_data directory.
 
-    This fixture just symlinks the VCF file in `test_data/` to a tmp_dir.
+    This fixture just symlinks the fasta files in `test_data/` to a tmp_dir.
 
-    :param tmp_path_factory: A tmp_path_factory object from pytest
-    :return: A Pathlike to the temporary VCF file.
+    :param tmp_path_factory: A tmp_path_factory object from pytest.
+    :return: A Pathlike to the temporary directory.
     """
 
     tmp_data = tmp_path_factory.mktemp('data')
-    tmp_vcf = tmp_data / test_vcf.name
-    tmp_idx = tmp_data / test_idx.name
+
     tmp_ref = tmp_data / test_ref.name
     tmp_fai = tmp_data / test_fai.name
-    test_vcf.link_to(tmp_vcf)
-    test_idx.link_to(tmp_idx)
     test_ref.link_to(tmp_ref)
     test_fai.link_to(tmp_fai)
 
-    return tmp_vcf
+    return tmp_data
 
 
-@pytest.mark.parametrize(argnames=['sites_suffix'],
-                         argvalues=zip(['.sites.tsv'])
+def make_vcf_link(tmp_dir, vcf, idx) -> Tuple[Path, Path]:
+    """Helper function to get the VCF file and index being tested into a tmp directory.
+
+    :param tmp_dir: The tmp_dir provided by tmp_path_factory in pytest
+    :param vcf: A Path to the VCF file being tested (should be in the test_data directory)
+    :param idx: A Path to the index file for the VCF file being tested (should be in the test_data directory)
+    :return: A tuple of the VCF and index files in the tmp directory.
+    """
+
+    tmp_vcf = tmp_dir / 'test_input.vcf.gz'
+    tmp_idx = tmp_dir / 'test_input.vcf.gz.tbi'
+    vcf.link_to(tmp_vcf)
+    idx.link_to(tmp_idx)
+
+    return tmp_vcf, tmp_idx
+
+
+@pytest.mark.parametrize(argnames=['sites_suffix', 'vcf_info'],
+                         argvalues=zip(['.sites.tsv', '.sites.tsv'], EXPECTED_VCF_VALUES)
                          )
-def test_generate_site_tsv(tmp_vcf_file, sites_suffix: str):
+def test_generate_site_tsv(tmp_data_dir, sites_suffix: str, vcf_info: dict):
     """Test generate_site_tsv
 
     generate_site_tsv will take a VCF file and generate a site TSV file. This is a simple test to ensure that the
     site TSV file is generated correctly.
 
-    :param tmp_vcf_file: A sym-link to the VCF file to generate the site TSV file from.
+    :param tmp_data_dir: A tmp data directory to store the VCF file in.
     :param sites_suffix: The suffix to append to the site TSV file.
+    :param vcf_info: A dictionary containing information about the VCF file being tested.
     """
 
-    test_mount = DockerMount(tmp_vcf_file.parent, Path('/test/'))
+    test_mount = DockerMount(tmp_data_dir, Path('/test/'))
     cmd_exec = CommandExecutor(docker_image='egardner413/mrcepid-burdentesting', docker_mounts=[test_mount])
+    tmp_vcf, tmp_idx = make_vcf_link(tmp_data_dir, vcf_info['vcf'], vcf_info['index'])
 
     # Have to do it this way because of temp directories...
-    file_list = generate_site_tsv(Path(tmp_vcf_file.name), sites_suffix, cmd_exec)
-    file_list = tmp_vcf_file.parent / file_list
+    file_list = generate_site_tsv(Path(tmp_vcf.name), sites_suffix, cmd_exec)
+    file_list = tmp_vcf.parent / file_list
 
     assert file_list.exists()
-    assert file_list.name == 'test_input.sites.tsv'
+
+    assert file_list == replace_multi_suffix(tmp_vcf, '.sites.tsv')
     with file_list.open('r') as test_list:
         for site_num, site in enumerate(test_list):
             data = site.split('\t')
@@ -80,43 +106,48 @@ def test_generate_site_tsv(tmp_vcf_file, sites_suffix: str):
             assert int(data[1])
 
         # Enumerate is 0-based...
-        assert site_num + 1 == test_vcf_len
+        assert site_num + 1 == vcf_info['original']
 
 
 @pytest.mark.parametrize(argnames=['alt_allele_threshold', 'expected_missing', 'expected_alts'],
                          argvalues=zip([0, 1, 2, 3, 4, 5, 6],
                                        [835, 54, 6, 4, 4, 4, 0],
                                        [0, 781, 845, 851, 851, 851, 875]))
-def test_count_variant_list_and_filter(tmp_vcf_file, alt_allele_threshold: int, expected_missing: int,
-                                       expected_alts: int):
+@pytest.mark.parametrize('vcf_info', [EXPECTED_VCF_VALUES[0]])
+def test_count_variant_list_and_filter(tmp_data_dir, alt_allele_threshold: int, expected_missing: int,
+                                       expected_alts: int, vcf_info: dict):
     """Test the count_variant_list_and_filter function.
 
-    Here we are priarily testing if the method filters according to alternate allele count properly and returns the
+    Here we are primarily testing if the method filters according to alternate allele count properly and returns the
     correct number of sites AFTER filtering.
 
-    :param tmp_vcf_file: A sym-link to the VCF file to generate the site TSV file from.
+    Note that we only test one VCF – unnecessary to test both
+
+    :param tmp_data_dir: A tmp data directory to store the VCF file in.
     :param alt_allele_threshold: Max number of alternate alleles to filter on.
     :param expected_missing: Number of sites we expect to be excluded after filtering.
     :param expected_alts: Total number of alternate alleles we expect to be left after filtering. This will be the
         total number of redundant positions in the VCF file.
+    :param vcf_info: A dictionary containing information about the VCF file being tested.
     """
 
     # !!! DO NOT MODIFY – THIS IS COMPLEX DUE TO TMP_DIR PATHS !!!
-    test_mount = DockerMount(tmp_vcf_file.parent, Path('/test/'))
+    test_mount = DockerMount(tmp_data_dir, Path('/test/'))
     cmd_exec = CommandExecutor(docker_image='egardner413/mrcepid-burdentesting', docker_mounts=[test_mount])
+    tmp_vcf, tmp_idx = make_vcf_link(tmp_data_dir, vcf_info['vcf'], vcf_info['index'])
 
-    file_list = generate_site_tsv(Path(tmp_vcf_file.name), '.sites.tsv', cmd_exec)
-    file_list = tmp_vcf_file.parent / file_list
+    file_list = generate_site_tsv(Path(tmp_vcf.name), '.sites.tsv', cmd_exec)
+    file_list = tmp_vcf.parent / file_list
 
     filtered_file, failed_sites, n_vcf_lines, \
         n_vcf_alternates = count_variant_list_and_filter(file_list, alt_allele_threshold)
-    filtered_file = tmp_vcf_file.parent / filtered_file
+    filtered_file = tmp_vcf.parent / filtered_file
     # !!! DO NOT MODIFY – THIS IS COMPLEX DUE TO TMP_DIR PATHS !!!
 
     assert filtered_file.exists()
 
     # Check that the number of lines in the filtered file is as expected
-    assert n_vcf_lines == test_vcf_len
+    assert n_vcf_lines == vcf_info['original']
     assert n_vcf_alternates == expected_alts
 
     # Check the catalogued failed sites are as expected
@@ -135,26 +166,29 @@ def test_count_variant_list_and_filter(tmp_vcf_file, alt_allele_threshold: int, 
 
 @pytest.mark.parametrize(argnames=['alt_allele_threshold', 'expected_sites', 'expected_multi_allelics'],
                          argvalues=zip([1, 2, 3, 4, 5, 6], [781, 877, 883, 883, 883, 907], [0, 96, 102, 102, 102, 126]))
-def test_normalise_and_left_correct(tmp_vcf_file, alt_allele_threshold: int, expected_sites: int,
-                                    expected_multi_allelics: int):
+@pytest.mark.parametrize('vcf_info', [EXPECTED_VCF_VALUES[0]])
+def test_normalise_and_left_correct(tmp_data_dir, alt_allele_threshold: int, expected_sites: int,
+                                    expected_multi_allelics: int, vcf_info: dict):
     """Test the normalisation function of BCFtools in the context of this applet.
 
-    :param tmp_vcf_file: A sym-link to the VCF file to generate the site TSV file from.
+    :param tmp_data_dir: A tmp data directory to store the VCF file in.
     :param alt_allele_threshold: Max number of alternate alleles to filter on.
     :param expected_sites: Total number of sites AFTER normalisation.
     :param expected_multi_allelics: Expected count of sites with an MA tag after normalisation.
+    :param vcf_info: A dictionary containing information about the VCF file being tested.
     """
 
     # !!! DO NOT MODIFY – THIS IS COMPLEX DUE TO TMP_DIR PATHS !!!
-    test_mount = DockerMount(tmp_vcf_file.parent, Path('/test/'))
+    test_mount = DockerMount(tmp_data_dir, Path('/test/'))
     cmd_exec = CommandExecutor(docker_image='egardner413/mrcepid-burdentesting', docker_mounts=[test_mount])
+    tmp_vcf, tmp_idx = make_vcf_link(tmp_data_dir, vcf_info['vcf'], vcf_info['index'])
 
     # Need to re-run to get the filtered file...
-    file_list = generate_site_tsv(Path(tmp_vcf_file.name), '.sites.tsv', cmd_exec)
-    file_list = tmp_vcf_file.parent / file_list
+    file_list = generate_site_tsv(Path(tmp_vcf.name), '.sites.tsv', cmd_exec)
+    file_list = tmp_vcf.parent / file_list
     filtered_file, _, _, _ = count_variant_list_and_filter(file_list, alt_allele_threshold)
-    normalised_bcf = normalise_and_left_correct(Path(tmp_vcf_file.name), Path(filtered_file.name), cmd_exec)
-    normalised_bcf = tmp_vcf_file.parent / normalised_bcf
+    normalised_bcf = normalise_and_left_correct(Path(tmp_vcf.name), Path(filtered_file.name), cmd_exec)
+    normalised_bcf = tmp_vcf.parent / normalised_bcf
     # !!! DO NOT MODIFY – THIS IS COMPLEX DUE TO TMP_DIR PATHS !!!
 
     assert normalised_bcf.exists()
@@ -174,32 +208,34 @@ def test_normalise_and_left_correct(tmp_vcf_file, alt_allele_threshold: int, exp
     assert n_ma_fields == expected_multi_allelics
 
 
-@pytest.mark.parametrize(argnames=['chunk_size', 'expected_sites'],
-                         argvalues=zip([50, 100, 500],
-                                       [845, 845, 845])
+@pytest.mark.parametrize(argnames=['chunk_size'],
+                         argvalues=zip([50, 100, 500])
                          )
-def test_split_sites_and_split_bcfs(tmp_vcf_file, chunk_size: int, expected_sites: int):
+@pytest.mark.parametrize('vcf_info', [EXPECTED_VCF_VALUES[0]])
+def test_split_sites_and_split_bcfs(tmp_data_dir, chunk_size: int, vcf_info: dict):
     """Test splitting of sites and bcf into smaller chunks.
 
-    :param tmp_vcf_file: A sym-link to the VCF file to generate the site TSV file from.
+    :param tmp_data_dir: A tmp data directory to store the VCF file in.
     :param chunk_size: The size of the chunk to create
-    :param expected_sites: Number of expected sites across all split chunks. This is always the same but parameterised
-        for future development if required.
+    :param vcf_info: A dictionary containing information about the VCF file being tested.
     """
 
     # !!! DO NOT MODIFY – THIS IS COMPLEX DUE TO TMP_DIR PATHS !!!
-    test_mount = DockerMount(tmp_vcf_file.parent, Path('/test/'))
+    test_mount = DockerMount(tmp_data_dir, Path('/test/'))
     cmd_exec = CommandExecutor(docker_image='egardner413/mrcepid-burdentesting', docker_mounts=[test_mount])
+    tmp_vcf, tmp_idx = make_vcf_link(tmp_data_dir, vcf_info['vcf'], vcf_info['index'])
 
-    file_list = generate_site_tsv(Path(tmp_vcf_file.name), '.sites.tsv', cmd_exec)
-    file_list = tmp_vcf_file.parent / file_list
+    file_list = generate_site_tsv(Path(tmp_vcf.name), '.sites.tsv', cmd_exec)
+    file_list = tmp_vcf.parent / file_list
     filtered_file, _, n_lines, norm_lines = count_variant_list_and_filter(file_list, 2)
-    normalised_bcf = normalise_and_left_correct(Path(tmp_vcf_file.name), Path(filtered_file.name), cmd_exec)
+    normalised_bcf = normalise_and_left_correct(Path(tmp_vcf.name), Path(filtered_file.name), cmd_exec)
     norm_sites = generate_site_tsv(Path(normalised_bcf.name), '.norm.sites.txt', cmd_exec)
-    norm_sites = tmp_vcf_file.parent / norm_sites
+    norm_sites = tmp_vcf.parent / norm_sites
     chunk_paths = [Path(chunk.name) for chunk in split_sites(norm_sites, norm_lines, chunk_size)]
     split_files = split_bcfs(Path(normalised_bcf.name), chunk_paths, cmd_exec)
     # !!! DO NOT MODIFY – THIS IS COMPLEX DUE TO TMP_DIR PATHS !!!
+
+    expected_sites = vcf_info['final']
 
     chunk_mod = 0 if expected_sites % chunk_size < (chunk_size / 2) else 1
     expected_chunk_len = (expected_sites // chunk_size) + chunk_mod
@@ -210,7 +246,7 @@ def test_split_sites_and_split_bcfs(tmp_vcf_file, chunk_size: int, expected_site
     num_sites = 0
     for bcf_n, split_bcf in enumerate(split_files):
         chunk_sites = 0
-        split_bcf = tmp_vcf_file.parent / split_bcf
+        split_bcf = tmp_vcf.parent / split_bcf
         split_reader = VariantFile(split_bcf)
 
         for rec in split_reader.fetch():
@@ -229,35 +265,44 @@ def test_split_sites_and_split_bcfs(tmp_vcf_file, chunk_size: int, expected_site
     assert num_sites == expected_sites
 
 
-@pytest.mark.parametrize(argnames=['output_name', 'expected_sites', 'expected_missing'],
-                         argvalues=zip(['test_output', None], [845, 845], [6, 6])
-                         )
-def test_write_information_files(tmp_vcf_file, output_name: Optional[str], expected_sites: int, expected_missing: int):
+@pytest.mark.parametrize(argnames=['output_name', 'vcf_infos'],
+                         argvalues=zip(['test_output', None], [EXPECTED_VCF_VALUES] * 2))
+def test_write_information_files(tmp_data_dir, output_name: Optional[str], vcf_infos: List[dict]):
     """Test the writing of information files at the conclusion of a run.
 
-    :param tmp_vcf_file: A sym-link to the VCF file to generate the site TSV file from.
+    :param tmp_data_dir: A tmp data directory to store the VCF file(s) in.
     :param output_name: The name of the output file. Can be none which will result in a default name being used.
-    :param expected_sites: The number of sites we expect to be in the final VCF file.
-    :param expected_missing: The number of sites we expect to be missing from the final VCF file but listed in the
-        failed sites file.
     """
 
     # !!! DO NOT MODIFY – THIS IS COMPLEX DUE TO TMP_DIR PATHS !!!
-    test_mount = DockerMount(tmp_vcf_file.parent, Path('/test/'))
+    test_mount = DockerMount(tmp_data_dir, Path('/test/'))
     cmd_exec = CommandExecutor(docker_image='egardner413/mrcepid-burdentesting', docker_mounts=[test_mount])
 
-    file_list = generate_site_tsv(Path(tmp_vcf_file.name), '.sites.tsv', cmd_exec)
-    file_list = tmp_vcf_file.parent / file_list
+    infos = []
+    skipped_sites = []
+    validation_data = {}
+    for vcf_info in vcf_infos:
+        tmp_vcf, tmp_idx = make_vcf_link(tmp_data_dir, vcf_info['vcf'], vcf_info['index'])
 
-    filtered_file, failed_sites, n_vcf_lines, \
-        n_vcf_alternates = count_variant_list_and_filter(file_list, 2)
-    # !!! DO NOT MODIFY – THIS IS COMPLEX DUE TO TMP_DIR PATHS !!!
+        file_list = generate_site_tsv(Path(tmp_vcf.name), '.sites.tsv', cmd_exec)
+        file_list = tmp_vcf.parent / file_list
 
-    info = [{'vcf': tmp_vcf_file.name, 'dxid': 'file-1234567890ABCDEFG', 'n_sites': n_vcf_lines,
-             'n_final_sites': n_vcf_alternates, 'vcf_size': tmp_vcf_file.stat().st_size}]
+        filtered_file, failed_sites, n_vcf_lines, \
+            n_vcf_alternates = count_variant_list_and_filter(file_list, 2)
+        # !!! DO NOT MODIFY – THIS IS COMPLEX DUE TO TMP_DIR PATHS !!!
 
-    info_path, failed_path = write_information_files(output_name, 1, info, failed_sites,
-                                                     output_dir=tmp_vcf_file.parent)
+        infos.append({'vcf': vcf_info['vcf'].name, 'dxid': 'file-1234567890ABCDEFG', 'n_sites': n_vcf_lines,
+                     'n_final_sites': n_vcf_alternates, 'vcf_size': tmp_vcf.stat().st_size})
+        skipped_sites.append(failed_sites)
+
+        validation_data[vcf_info['vcf'].name] = {'original': n_vcf_lines, 'final': n_vcf_alternates}
+
+        tmp_vcf.unlink()
+        tmp_idx.unlink()
+        sleep(2)  # Sleep to ensure the files are deleted before the next test
+
+    info_path, failed_path = write_information_files(output_name, 1, infos, skipped_sites,
+                                                     output_dir=tmp_data_dir)
 
     assert info_path.exists()
     assert failed_path.exists()
@@ -271,11 +316,12 @@ def test_write_information_files(tmp_vcf_file, output_name: Optional[str], expec
 
     with info_path.open('r') as info_reader:
         info_csv = csv.DictReader(info_reader, delimiter='\t')
+        valid_names = [x['vcf'].name for x in EXPECTED_VCF_VALUES]
         for row in info_csv:
-            assert row['vcf'] == tmp_vcf_file.name
+            assert row['vcf'] in valid_names
             assert row['dxid'] == 'file-1234567890ABCDEFG'
-            assert int(row['n_sites']) == test_vcf_len
-            assert int(row['n_final_sites']) == expected_sites
+            assert int(row['n_sites']) == validation_data[row['vcf']]['original']
+            assert int(row['n_final_sites']) == validation_data[row['vcf']]['final']
 
     with failed_path.open('r') as failed_reader:
         failed_csv = csv.DictReader(failed_reader, delimiter='\t')
@@ -291,4 +337,5 @@ def test_write_information_files(tmp_vcf_file, output_name: Optional[str], expec
                 for n, alt in enumerate(alts):
                     assert counts[n] > 1000
 
+        expected_missing = sum([x['missing'] for x in EXPECTED_VCF_VALUES])
         assert total_skipped == expected_missing

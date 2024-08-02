@@ -43,6 +43,9 @@ dx describe file-1234567890ABCDEFGHIJKLMN
 
 ### Changelog
 
+* v2.0.1
+  * Fixed a bug where skipped sites were duplicated if processing multiple VCFs in one job.
+
 * v2.0.0
   * Added support for WGS data. This comes with several changes under-the-hood to support issues with the larger WGS data. These changes will not effect processing of WES data, but please see below for specific changes:
     * Modified standard number of CPUs per-vcf to 8. We have done extensive testing to ensure that the process is $O(n^2)$ in terms of CPU usage – e.g., 2 CPUs = 60m / VCF, 4 CPUs = 30m / VCF
