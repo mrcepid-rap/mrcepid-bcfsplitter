@@ -34,8 +34,8 @@ def ingest_human_reference(human_reference: dict, human_reference_index: dict, c
         CMD_EXEC from this module.
     """
 
-    reference = InputFileHandler(str(human_reference)).get_file_handle()
-    InputFileHandler(str(human_reference_index)).get_file_handle()
+    reference = InputFileHandler(human_reference).get_file_handle()
+    InputFileHandler(human_reference_index).get_file_handle()
 
     # if the file is not unzipped, unzip it
     if reference.suffix == '.gz':
@@ -415,7 +415,7 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_na
     # dxpy.download_dxfile(input_vcfs.get_id(), 'vcf_list.txt')  # Actually download the file
 
     # download the file
-    input_vcfs = InputFileHandler(str(input_vcfs)).get_file_handle()
+    input_vcfs = InputFileHandler(input_vcfs).get_file_handle()
 
     reference = ingest_human_reference(human_reference, human_reference_index)
 

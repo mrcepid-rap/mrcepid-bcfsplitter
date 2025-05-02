@@ -43,6 +43,15 @@ dx describe file-1234567890ABCDEFGHIJKLMN
 
 ### Changelog
 
+* v2.0.2
+  * Have aligned the script in keeping with the latest InputFileHandler class from general_utilities. All functionality remains the same, apart from that the input files should now have two columns: vcf and vcf_index:
+  
+  | vcf             | vcf_idx         |
+  |-----------------|-----------------|
+  | file-abcde12345 | file-abcde12345 |
+  | file-abcde12345 | file-abcde12345 |
+
+
 * v2.0.1
   * Fixed a bug where skipped sites were duplicated if processing multiple VCFs in one job.
 
