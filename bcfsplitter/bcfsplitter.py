@@ -14,8 +14,9 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
-from general_utilities.association_resources import generate_linked_dx_file, download_dxfile_by_name, \
-    replace_multi_suffix
+from general_utilities.association_resources import replace_multi_suffix
+from general_utilities.import_utils.import_lib import InputFileHandler
+from general_utilities.import_utils.file_handlers.dnanexus_utilities import generate_linked_dx_file
 from general_utilities.job_management.command_executor import build_default_command_executor, CommandExecutor
 from general_utilities.job_management.thread_utility import ThreadUtility
 from general_utilities.mrc_logger import MRCLogger
@@ -24,7 +25,7 @@ LOGGER = MRCLogger().get_logger()
 CMD_EXEC = build_default_command_executor()
 
 
-def ingest_human_reference(human_reference: dict, human_reference_index: dict, cmd_exec: CommandExecutor = CMD_EXEC) -> None:
+def ingest_human_reference(human_reference: dict, human_reference_index: dict, cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
     """Download human reference files – default dxIDs are the location of the GRCh38 reference file on AWS London
 
     :param human_reference: DXLink to the human reference file (must be a .fa.gz)
@@ -33,10 +34,17 @@ def ingest_human_reference(human_reference: dict, human_reference_index: dict, c
         CMD_EXEC from this module.
     """
 
-    dxpy.download_dxfile(dxpy.DXFile(human_reference).get_id(), "reference.fasta.gz")
-    dxpy.download_dxfile(dxpy.DXFile(human_reference_index).get_id(), "reference.fasta.fai")
-    cmd = "gunzip reference.fasta.gz"  # Better to unzip the reference for most commands for some reason...
-    cmd_exec.run_cmd(cmd)
+    reference = InputFileHandler(str(human_reference)).get_file_handle()
+    InputFileHandler(str(human_reference_index)).get_file_handle()
+
+    # if the file is not unzipped, unzip it
+    if reference.suffix == '.gz':
+        cmd = f"gunzip {reference}"  # Better to unzip the reference for most commands for some reason...
+        cmd_exec.run_cmd(cmd)
+        # remove the .gz suffix from the filename
+        reference = reference.with_suffix('')  # Update the reference to remove the .gz suffix
+
+    return reference
 
 
 def generate_site_tsv(vcf_file: Path, sites_suffix: str, cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
@@ -55,37 +63,30 @@ def generate_site_tsv(vcf_file: Path, sites_suffix: str, cmd_exec: CommandExecut
     sites_file = replace_multi_suffix(vcf_file, sites_suffix)
 
     cmd = f'bcftools query -f "%CHROM\\t%POS\\t%REF\\t%ALT\\t%AC\\n" ' \
-          f'-o /test/{sites_file} /test/{vcf_file}'
+          f'-o /test/{sites_file} /test/{vcf_file.name}'
     cmd_exec.run_cmd_on_docker(cmd)
 
     return sites_file
 
 
-def download_vcf(input_vcf: str) -> Tuple[Path, int]:
+def download_vcf(input_vcf: str, input_vcf_index: str) -> Tuple[Path, int]:
     """Helper function that downloads a VCF and it's index, and then calculates the filesize for record-keeping purposes.
 
     :param input_vcf: An input_vcf file in the form of a DNANexus file ID (file-123456...)
+    :param input_vcf_index:  An input_vcf_index file in the form of a DNANexus file ID (file-123456...)
     :return: The downloaded VCF file and the size (in bytes) of the VCF file
     """
 
-    # Unsure if this is safe, but I think is the easiest way to avoid hardcoding a given project ID
-    project_id = dxpy.PROJECT_CONTEXT_ID
+    vcfpath = InputFileHandler(input_vcf).get_file_handle()
+    vcfpath_index = InputFileHandler(input_vcf_index).get_file_handle()
 
-    # Set a DX file handler for the VCF file & index chunk
-    # Both the DXFile class and download_dxfile method require a project_id as they directly access UKBB bulk data.
-    # The method I have used _hopefully_ avoids hardcoding...
-    vcf = dxpy.DXFile(input_vcf, project=project_id)
+    # Check the file is a vcf.gz
+    if not vcfpath.name.endswith('.vcf.gz'):
+        raise ValueError(f"File {input_vcf} is not a vcf.gz file!")
 
-    # Now we need to find the corresponding tbi index using dxpy search functions
-    idx_folder = vcf.describe()['folder']
-    idx_name = vcf.describe()['name'] + '.tbi'
-    idx_object = dxpy.find_one_data_object(more_ok=False, classname='file', project=project_id, folder=idx_folder,
-                                           name=idx_name, name_mode='exact')
-    vcfidx = dxpy.DXFile(dxid=idx_object['id'], project=idx_object['project'])
-
-    # And download both...
-    vcfpath = download_dxfile_by_name(vcf, project_id=project_id, print_status=False)
-    download_dxfile_by_name(vcfidx, project_id=project_id, print_status=False)
+    # Check the file is a vcf index
+    if not vcfpath_index.name.endswith('.vcf.gz.tbi'):
+        raise ValueError(f"File {input_vcf_index} is not a vcf.gz.tbi file!")
 
     # Get the size of the VCF file for logging purposes:
     vcf_size = vcfpath.stat().st_size
@@ -160,7 +161,7 @@ def count_variant_list_and_filter(sites_file: Path, alt_allele_threshold: int) -
         return filtered_sites_file, failed_sites, n_vcf_lines, n_vcf_alternates
 
 
-def normalise_and_left_correct(vcf_file: Path, site_list: Path, cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
+def normalise_and_left_correct(vcf_file: Path, site_list: Path, reference_fasta: Path, cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
     """A wrapper for BCFtools norm to left-normalise and split all variants
 
     Generate a normalised bcf file for all downstream processing using `bcftools norm`:
@@ -172,16 +173,17 @@ def normalise_and_left_correct(vcf_file: Path, site_list: Path, cmd_exec: Comman
 
     :param vcf_file: A list of bcffiles to normalise and left-correct
     :param site_list: A list of sites to restrict to and then normalise and left-correct
+    :param reference_fasta: A reference fasta file to use for normalisation and left-correction, output of InputFileHandler
     :param cmd_exec: An optional alternate CommandExecutor to use for executing system calls. Defaults to the default
         CMD_EXEC from this module.
     :return: A Path object to the normalised and left-corrected BCF file
     """
 
     out_bcf = replace_multi_suffix(vcf_file, '.norm.bcf')
-    cmd = f'bcftools norm --threads 8 -w 100 -Ob -m - -f /test/reference.fasta ' \
+    cmd = f'bcftools norm --threads 8 -w 100 -Ob -m - -f /test/{reference_fasta.name} ' \
           f'-T /test/{site_list} ' \
           f'--old-rec-tag MA ' \
-          f'-o /test/{out_bcf} /test/{vcf_file}'
+          f'-o /test/{out_bcf} /test/{vcf_file.name}'
     cmd_exec.run_cmd_on_docker(cmd)
 
     return out_bcf
@@ -285,14 +287,15 @@ def split_bcfs(vcf_file: Path, file_chunk_names: List[Path], cmd_exec: CommandEx
         out_bcf = file_chunk.with_suffix(f'{file_chunk.suffix}.bcf')
         cmd = f'bcftools view --threads 8 -e "alt==\'*\'" -T /test/{file_chunk} ' \
               f'-Ob -o /test/{out_bcf} ' \
-              f'/test/{vcf_file}'
+              f'/test/{vcf_file.name}'
         cmd_exec.run_cmd_on_docker(cmd)
         bcf_files.append(out_bcf)
 
     return bcf_files
 
 
-def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int) -> Tuple[List[dxpy.DXFile], Dict, List[Dict]]:
+def process_vcf(input_vcf: str, input_vcf_index: str, chunk_size: int, alt_allele_threshold: int,
+                reference_fasta: Path) -> Tuple[List[dxpy.DXFile], Dict, List[Dict]]:
     """Helper function that enables multithreading in this applet
 
     This method calls the individual functions of the methods in this applet for a single VCF. This method just allows
@@ -300,16 +303,18 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int) -> T
     and passing it through the splitting protocol outlined in the main method and README.
 
     :param input_vcf: A DNANexus file-id (file-12345...) in string format to process
+    :param input_vcf_index: A DNANexus file-id (file-12345...) in string format to process
     :param chunk_size: The number of variants to include per-output BCF produced by this applet. Lines per-file cannot
         be smaller than [chunk_size] / 2.
     :param alt_allele_threshold: Number of alternate alleles to allow in a variant before it is excluded
     :return: A Tuple consisting of a List of DNANexus DXFile objects that have been uploaded to the DNANexus platform
         and are ready for return to the requesting project created by the :func:`split_bcfs()` method and a dict of
         information about the file that has been split for documentation purposes.
+    :param reference_fasta: path to a reference fasta file, output of InputFileHandler
     """
 
     # 1. Download the VCF
-    vcf_path, vcf_size = download_vcf(input_vcf)
+    vcf_path, vcf_size = download_vcf(input_vcf, input_vcf_index)
 
     # 2. Generate a list of all variants in the file
     sites_file = generate_site_tsv(vcf_path, '.sites.unfiltered.txt')
@@ -330,7 +335,7 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int) -> T
     else:
 
         # 4. Normalise and left-correct all variants
-        norm_bcf = normalise_and_left_correct(vcf_path, orig_sites)
+        norm_bcf = normalise_and_left_correct(vcf_path, orig_sites, reference_fasta)
         vcf_path.unlink()
 
         norm_sites = generate_site_tsv(norm_bcf, '.norm.sites.txt')
@@ -406,10 +411,13 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_na
 
     # Run through each VCF file provided and perform filtering.
     # input_vcfs is a file list of DNANexus file hashes that I dereference below
-    input_vcfs = dxpy.DXFile(input_vcfs['$dnanexus_link'])
-    dxpy.download_dxfile(input_vcfs.get_id(), 'vcf_list.txt')  # Actually download the file
+    # input_vcfs = dxpy.DXFile(input_vcfs['$dnanexus_link'])
+    # dxpy.download_dxfile(input_vcfs.get_id(), 'vcf_list.txt')  # Actually download the file
 
-    ingest_human_reference(human_reference, human_reference_index)
+    # download the file
+    input_vcfs = InputFileHandler(str(input_vcfs)).get_file_handle()
+
+    reference = ingest_human_reference(human_reference, human_reference_index)
 
     # Use thread utility to multi-thread this process:
     thread_utility = ThreadUtility(thread_factor=8,
@@ -418,14 +426,23 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_na
 
     # And launch individual jobs
     n_vcfs = 0
-    with Path('vcf_list.txt').open('r') as input_vcf_reader:
+    with Path(input_vcfs).open('r') as input_vcf_reader:
+        # read in each line of the input file
         for line in input_vcf_reader:
+            # Skip the header line if it doesn't start with 'file-' (e.g. the header should be 'vcf / vcf_idx'
+            if not line.startswith('file-'):
+                continue
+
             n_vcfs += 1
-            input_vcf = line.rstrip()
+            # Get the input VCF and index
+            input_vcf, input_vcf_index = line.rstrip().split()
+
             thread_utility.launch_job(process_vcf,
                                       input_vcf=input_vcf,
+                                      input_vcf_index=input_vcf_index,
                                       chunk_size=chunk_size,
-                                      alt_allele_threshold=alt_allele_threshold)
+                                      alt_allele_threshold=alt_allele_threshold,
+                                      reference_fasta=reference)
 
     bcf_files = []
     infos = []

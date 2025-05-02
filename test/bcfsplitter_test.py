@@ -14,7 +14,7 @@ from pysam import VariantFile
 from general_utilities.association_resources import replace_multi_suffix
 from general_utilities.job_management.command_executor import DockerMount, CommandExecutor
 from bcfsplitter.bcfsplitter import generate_site_tsv, count_variant_list_and_filter, normalise_and_left_correct, \
-    split_sites, split_bcfs, write_information_files
+    split_sites, split_bcfs, write_information_files, ingest_human_reference, download_vcf
 
 test_data_dir = Path(__file__).parent / 'test_data'
 
@@ -72,6 +72,58 @@ def make_vcf_link(tmp_dir, vcf, idx) -> Tuple[Path, Path]:
     idx.link_to(tmp_idx)
 
     return tmp_vcf, tmp_idx
+
+
+@pytest.mark.parametrize(
+    argnames=['reference', 'reference_index'],
+    argvalues=[
+        ('reference.fasta',
+         'reference.fasta.fai')
+    ]
+)
+def test_ingest_human_reference(tmp_data_dir, reference, reference_index):
+    """Test the ingestion of a human reference genome.
+
+    :param reference: The name of the reference genome file.
+    :param reference_index: The name of the index file for the reference genome.
+    """
+
+    # Convert to Path objects relative to tmp_data_dir
+    reference = tmp_data_dir / reference
+    reference_index = tmp_data_dir / reference_index
+
+    test_mount = DockerMount(tmp_data_dir, Path('/test/'))
+    cmd_exec = CommandExecutor(docker_image='egardner413/mrcepid-burdentesting', docker_mounts=[test_mount])
+
+    reference = ingest_human_reference(reference, reference_index, cmd_exec)
+
+    assert reference.exists()
+    assert reference_index.exists()
+
+
+@pytest.mark.parametrize(
+    argnames=['input_vcf', 'input_index'],
+    argvalues=[
+        (test_data_dir / 'test_input1.vcf.gz',
+         test_data_dir / 'test_input1.vcf.gz.tbi'),
+        (test_data_dir / 'test_input2.vcf.gz',
+         test_data_dir / 'test_input2.vcf.gz.tbi')
+    ]
+)
+def test_download_vcf(tmp_data_dir, input_vcf, input_index):
+    """Test the download of a VCF file.
+
+    :param input_vcf: The name of the VCF file to be downloaded.
+    """
+
+    # Convert to Path objects relative to tmp_data_dir
+    input_vcf = tmp_data_dir / input_vcf
+    input_index = tmp_data_dir / input_index
+
+    vcfpath, vcf_zie = download_vcf(input_vcf, input_index)
+
+    assert vcfpath.exists()
+    assert vcf_zie == input_vcf.stat().st_size
 
 
 @pytest.mark.parametrize(argnames=['sites_suffix', 'vcf_info'],
@@ -187,7 +239,7 @@ def test_normalise_and_left_correct(tmp_data_dir, alt_allele_threshold: int, exp
     file_list = generate_site_tsv(Path(tmp_vcf.name), '.sites.tsv', cmd_exec)
     file_list = tmp_vcf.parent / file_list
     filtered_file, _, _, _ = count_variant_list_and_filter(file_list, alt_allele_threshold)
-    normalised_bcf = normalise_and_left_correct(Path(tmp_vcf.name), Path(filtered_file.name), cmd_exec)
+    normalised_bcf = normalise_and_left_correct(Path(tmp_vcf.name), Path(filtered_file.name), test_ref, cmd_exec)
     normalised_bcf = tmp_vcf.parent / normalised_bcf
     # !!! DO NOT MODIFY – THIS IS COMPLEX DUE TO TMP_DIR PATHS !!!
 
@@ -228,7 +280,7 @@ def test_split_sites_and_split_bcfs(tmp_data_dir, chunk_size: int, vcf_info: dic
     file_list = generate_site_tsv(Path(tmp_vcf.name), '.sites.tsv', cmd_exec)
     file_list = tmp_vcf.parent / file_list
     filtered_file, _, n_lines, norm_lines = count_variant_list_and_filter(file_list, 2)
-    normalised_bcf = normalise_and_left_correct(Path(tmp_vcf.name), Path(filtered_file.name), cmd_exec)
+    normalised_bcf = normalise_and_left_correct(Path(tmp_vcf.name), Path(filtered_file.name), test_ref, cmd_exec)
     norm_sites = generate_site_tsv(Path(normalised_bcf.name), '.norm.sites.txt', cmd_exec)
     norm_sites = tmp_vcf.parent / norm_sites
     chunk_paths = [Path(chunk.name) for chunk in split_sites(norm_sites, norm_lines, chunk_size)]
