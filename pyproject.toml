@@ -13,7 +13,7 @@ dependencies = [
     "dxpy==0.346.0",
     "pytest>=7.4.0,<8.0.0",
     "pysam>=0.22.1,<0.23.0",
-    "general-utilities @ git+https://github.com/mrcepid-rap/general_utilities.git@feature/implement-a-fileparsing-class"
+    "general-utilities @ git+https://github.com/mrcepid-rap/general_utilities.git@main"
 ]
 
 [build-system]

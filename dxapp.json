@@ -117,16 +117,22 @@
     "assetDepends": [],
     "execDepends": [
       {
+        "name": "uv",
+        "package_manager": "pip"
+      },
+      {
         "name": "general_utilities",
         "package_manager": "git",
-        "url":  "https://github.com/mrcepid-rap/general_utilities.git",
-        "tag": "v1.5.1",
-        "build_commands": "pip3 install ."
+        "url": "https://github.com/mrcepid-rap/general_utilities.git",
+        "tag": "main",
+        "build_commands": "uv pip install --system ."
       }
     ]
   },
   "access": {
-    "network": ["*"],
+    "network": [
+      "*"
+    ],
     "allProjects": "VIEW"
   },
   "regionalOptions": {
