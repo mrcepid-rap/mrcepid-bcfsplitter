@@ -426,7 +426,7 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_na
 
     # And launch individual jobs
     n_vcfs = 0
-    with Path(input_vcfs).open('r') as input_vcf_reader:
+    with input_vcfs.open('r') as input_vcf_reader:
         # read in each line of the input file
         for line in input_vcf_reader:
             # Skip the header line if it doesn't start with 'file-' (e.g. the header should be 'vcf / vcf_idx'
