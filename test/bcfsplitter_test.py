@@ -12,11 +12,13 @@ from typing import Optional, List, Tuple
 from pysam import VariantFile
 
 from general_utilities.association_resources import replace_multi_suffix
-from general_utilities.job_management.command_executor import DockerMount, CommandExecutor
+from general_utilities.job_management.command_executor import DockerMount, CommandExecutor, \
+    build_default_command_executor
 from bcfsplitter.bcfsplitter import generate_site_tsv, count_variant_list_and_filter, normalise_and_left_correct, \
     split_sites, split_bcfs, write_information_files, ingest_human_reference, download_vcf
 
 test_data_dir = Path(__file__).parent / 'test_data'
+CMD_EXEC = build_default_command_executor()
 
 EXPECTED_VCF_VALUES = [{'final': 845, 'missing': 6, 'original': 835,
                         'vcf': test_data_dir / 'test_input1.vcf.gz',
@@ -110,17 +112,17 @@ def test_ingest_human_reference(tmp_data_dir, reference, reference_index):
          test_data_dir / 'test_input2.vcf.gz.tbi')
     ]
 )
-def test_download_vcf(tmp_data_dir, input_vcf, input_index):
+def test_download_vcf(tmp_data_dir, input_vcf, cmd_exec: CommandExecutor = CMD_EXEC):
     """Test the download of a VCF file.
 
     :param input_vcf: The name of the VCF file to be downloaded.
+    :param cmd_exec: A CommandExecutor object to run commands on the docker container.
     """
 
     # Convert to Path objects relative to tmp_data_dir
     input_vcf = tmp_data_dir / input_vcf
-    input_index = tmp_data_dir / input_index
 
-    vcfpath, vcf_zie = download_vcf(input_vcf, input_index)
+    vcfpath, vcf_zie = download_vcf(input_vcf, cmd_exec)
 
     assert vcfpath.exists()
     assert vcf_zie == input_vcf.stat().st_size

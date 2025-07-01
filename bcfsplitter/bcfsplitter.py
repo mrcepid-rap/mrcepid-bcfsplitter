@@ -14,8 +14,8 @@ import logging
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
-from general_utilities.association_resources import replace_multi_suffix
-from general_utilities.import_utils.import_lib import InputFileHandler
+from general_utilities.association_resources import replace_multi_suffix, find_index
+from general_utilities.import_utils.file_handlers.input_file_handler import InputFileHandler, FileType
 from general_utilities.import_utils.file_handlers.dnanexus_utilities import generate_linked_dx_file
 from general_utilities.job_management.command_executor import build_default_command_executor, CommandExecutor
 from general_utilities.job_management.thread_utility import ThreadUtility
@@ -63,30 +63,39 @@ def generate_site_tsv(vcf_file: Path, sites_suffix: str, cmd_exec: CommandExecut
     sites_file = replace_multi_suffix(vcf_file, sites_suffix)
 
     cmd = f'bcftools query -f "%CHROM\\t%POS\\t%REF\\t%ALT\\t%AC\\n" ' \
-          f'-o /test/{sites_file} /test/{vcf_file.name}'
+          f'-o /test/{sites_file.name} /test/{vcf_file.name}'
     cmd_exec.run_cmd_on_docker(cmd)
 
     return sites_file
 
 
-def download_vcf(input_vcf: str, input_vcf_index: str) -> Tuple[Path, int]:
+def download_vcf(input_vcf: str, cmd_exec: CommandExecutor = CMD_EXEC) -> Tuple[Path, int]:
     """Helper function that downloads a VCF and it's index, and then calculates the filesize for record-keeping purposes.
 
     :param input_vcf: An input_vcf file in the form of a DNANexus file ID (file-123456...)
-    :param input_vcf_index:  An input_vcf_index file in the form of a DNANexus file ID (file-123456...)
+    :param cmd_exec: A CommandExecutor to use for executing system calls on Docker.
     :return: The downloaded VCF file and the size (in bytes) of the VCF file
     """
 
+    # download the VCF files
     vcfpath = InputFileHandler(input_vcf).get_file_handle()
-    vcfpath_index = InputFileHandler(input_vcf_index).get_file_handle()
+
+    # if we are using DNA Nexus, find the index file
+    if input_vcf == FileType.DNA_NEXUS_FILE:
+        find_index(input_vcf, '.tbi')
+    # if we are not on DNA Nexus we need to create the index
+    else:
+        vcfpath_index = vcfpath.with_suffix('.tbi')
+        cmd = f'bcftools index -t /test/{vcfpath.name}'
+        cmd_exec.run_cmd_on_docker(cmd)
 
     # Check the file is a vcf.gz
     if not vcfpath.name.endswith('.vcf.gz'):
         raise ValueError(f"File {input_vcf} is not a vcf.gz file!")
 
     # Check the file is a vcf index
-    if not vcfpath_index.name.endswith('.vcf.gz.tbi'):
-        raise ValueError(f"File {input_vcf_index} is not a vcf.gz.tbi file!")
+    if not vcfpath_index.name.endswith('.vcf.tbi' or vcfpath_index.name.endswith('.vcf.gz.tbi')):
+        raise ValueError(f"File {vcfpath_index.name} is not a tbi file!")
 
     # Get the size of the VCF file for logging purposes:
     vcf_size = vcfpath.stat().st_size
@@ -181,9 +190,9 @@ def normalise_and_left_correct(vcf_file: Path, site_list: Path, reference_fasta:
 
     out_bcf = replace_multi_suffix(vcf_file, '.norm.bcf')
     cmd = f'bcftools norm --threads 8 -w 100 -Ob -m - -f /test/{reference_fasta.name} ' \
-          f'-T /test/{site_list} ' \
+          f'-T /test/{site_list.name} ' \
           f'--old-rec-tag MA ' \
-          f'-o /test/{out_bcf} /test/{vcf_file.name}'
+          f'-o /test/{out_bcf.name} /test/{vcf_file.name}'
     cmd_exec.run_cmd_on_docker(cmd)
 
     return out_bcf
@@ -285,8 +294,8 @@ def split_bcfs(vcf_file: Path, file_chunk_names: List[Path], cmd_exec: CommandEx
     bcf_files = []
     for file_chunk in file_chunk_names:
         out_bcf = file_chunk.with_suffix(f'{file_chunk.suffix}.bcf')
-        cmd = f'bcftools view --threads 8 -e "alt==\'*\'" -T /test/{file_chunk} ' \
-              f'-Ob -o /test/{out_bcf} ' \
+        cmd = f'bcftools view --threads 8 -e "alt==\'*\'" -T /test/{file_chunk.name} ' \
+              f'-Ob -o /test/{out_bcf.name} ' \
               f'/test/{vcf_file.name}'
         cmd_exec.run_cmd_on_docker(cmd)
         bcf_files.append(out_bcf)
@@ -294,7 +303,7 @@ def split_bcfs(vcf_file: Path, file_chunk_names: List[Path], cmd_exec: CommandEx
     return bcf_files
 
 
-def process_vcf(input_vcf: str, input_vcf_index: str, chunk_size: int, alt_allele_threshold: int,
+def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int,
                 reference_fasta: Path) -> Tuple[List[dxpy.DXFile], Dict, List[Dict]]:
     """Helper function that enables multithreading in this applet
 
@@ -303,7 +312,6 @@ def process_vcf(input_vcf: str, input_vcf_index: str, chunk_size: int, alt_allel
     and passing it through the splitting protocol outlined in the main method and README.
 
     :param input_vcf: A DNANexus file-id (file-12345...) in string format to process
-    :param input_vcf_index: A DNANexus file-id (file-12345...) in string format to process
     :param chunk_size: The number of variants to include per-output BCF produced by this applet. Lines per-file cannot
         be smaller than [chunk_size] / 2.
     :param alt_allele_threshold: Number of alternate alleles to allow in a variant before it is excluded
@@ -314,7 +322,7 @@ def process_vcf(input_vcf: str, input_vcf_index: str, chunk_size: int, alt_allel
     """
 
     # 1. Download the VCF
-    vcf_path, vcf_size = download_vcf(input_vcf, input_vcf_index)
+    vcf_path, vcf_size = download_vcf(input_vcf)
 
     # 2. Generate a list of all variants in the file
     sites_file = generate_site_tsv(vcf_path, '.sites.unfiltered.txt')
@@ -435,11 +443,10 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_na
 
             n_vcfs += 1
             # Get the input VCF and index
-            input_vcf, input_vcf_index = line.rstrip().split()
+            input_vcf = line.rstrip().split()[0]
 
             thread_utility.launch_job(process_vcf,
                                       input_vcf=input_vcf,
-                                      input_vcf_index=input_vcf_index,
                                       chunk_size=chunk_size,
                                       alt_allele_threshold=alt_allele_threshold,
                                       reference_fasta=reference)
