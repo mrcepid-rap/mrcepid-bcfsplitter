@@ -1,6 +1,6 @@
 [project]
 name = "bcfsplitter"
-version = "2.0.0"
+version = "2.0.2"
 description = ""
 authors = [
     { name = "Eugene Gardner", email = "eugene.gardner@mrc-epid.cam.ac.uk" },
