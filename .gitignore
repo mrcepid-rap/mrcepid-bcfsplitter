@@ -1,4 +1,14 @@
 /test/dx_run.log
+dx_run.log
 /test/test_data/test_input.sites.unfiltered.txt
 /test/test_data/reference.fasta
 /test/test_data/reference.fasta.fai
+uv.lock
+bcfsplitter
+bcfsplitter.egg-info
+.idea
+test/__pycache__
+test/reference.fasta
+test/reference.fasta.fai
+test/test_input1*
+test/test_input2*
