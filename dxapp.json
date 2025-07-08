@@ -124,7 +124,7 @@
         "name": "general_utilities",
         "package_manager": "git",
         "url": "https://github.com/mrcepid-rap/general_utilities.git",
-        "tag": "main",
+        "tag": "v2.0.2",
         "build_commands": "uv pip install --system ."
       }
     ]
