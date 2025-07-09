@@ -3,7 +3,7 @@
   "title": "BCFSplitter",
   "summary": "Normalises and splits a VCF into smaller BCFs",
   "dxapi": "1.0.0",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "inputSpec": [
     {
       "name": "input_vcfs",
@@ -121,10 +121,10 @@
         "package_manager": "pip"
       },
       {
-        "name": "general_utilities",
+        "name": "bcfsplitter",
         "package_manager": "git",
-        "url": "https://github.com/mrcepid-rap/general_utilities.git",
-        "tag": "v2.0.2",
+        "url": "https://github.com/mrcepid-rap/mrcepid-bcfsplitter.git",
+        "tag": "v2.0.3",
         "build_commands": "uv pip install --system ."
       }
     ]
