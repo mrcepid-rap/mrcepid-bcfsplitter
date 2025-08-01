@@ -124,7 +124,7 @@
         "name": "bcfsplitter",
         "package_manager": "git",
         "url": "https://github.com/mrcepid-rap/mrcepid-bcfsplitter.git",
-        "tag": "v2.0.3",
+        "tag": "feature/implement-export-class",
         "build_commands": "uv pip install --system ."
       }
     ]
