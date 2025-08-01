@@ -8,15 +8,14 @@
 #   http://autodoc.dnanexus.com/bindings/python/current/
 
 import csv
-import dxpy
 import logging
-
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
+import dxpy
 from general_utilities.association_resources import replace_multi_suffix, find_index
+from general_utilities.import_utils.file_handlers.export_file_handler import ExportFileHandler
 from general_utilities.import_utils.file_handlers.input_file_handler import InputFileHandler, FileType
-from general_utilities.import_utils.file_handlers.dnanexus_utilities import generate_linked_dx_file
 from general_utilities.job_management.command_executor import build_default_command_executor, CommandExecutor
 from general_utilities.job_management.thread_utility import ThreadUtility
 from general_utilities.mrc_logger import MRCLogger
@@ -25,7 +24,8 @@ LOGGER = MRCLogger().get_logger()
 CMD_EXEC = build_default_command_executor()
 
 
-def ingest_human_reference(human_reference: dict, human_reference_index: dict, cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
+def ingest_human_reference(human_reference: dict, human_reference_index: dict,
+                           cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
     """Download human reference files – default dxIDs are the location of the GRCh38 reference file on AWS London
 
     :param human_reference: DXLink to the human reference file (must be a .fa.gz)
@@ -170,7 +170,8 @@ def count_variant_list_and_filter(sites_file: Path, alt_allele_threshold: int) -
         return filtered_sites_file, failed_sites, n_vcf_lines, n_vcf_alternates
 
 
-def normalise_and_left_correct(vcf_file: Path, site_list: Path, reference_fasta: Path, cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
+def normalise_and_left_correct(vcf_file: Path, site_list: Path, reference_fasta: Path,
+                               cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
     """A wrapper for BCFtools norm to left-normalise and split all variants
 
     Generate a normalised bcf file for all downstream processing using `bcftools norm`:
@@ -353,14 +354,16 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int,
 
         # 6. And actually split the files into chunks:
         split_files = split_bcfs(norm_bcf, file_chunk_paths)
-        final_files = [generate_linked_dx_file(file) for file in split_files]
+
+        # export the split files to DNANexus
+        exporter = ExportFileHandler()
+        final_files = exporter.export_files(split_files)
 
     return final_files, log_info, failed_sites
 
 
 def write_information_files(output_name: Optional[str], n_vcfs: int, infos: List[Dict],
                             skipped_sites: List[List[Dict]], output_dir: Path = Path('./')) -> Tuple[Path, Path]:
-
     output_name = f'.{output_name}.' if output_name else '.'
     split_info_path = output_dir / f'vcf_info{output_name}tsv'
     skipped_sites_path = output_dir / f'skipped_sites{output_name}tsv'
@@ -463,9 +466,12 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_na
     split_info_path, skipped_sites_path = write_information_files(output_name, n_vcfs, infos, skipped_sites)
 
     # Set output
-    output = {'output_vcfs': [dxpy.dxlink(item) for item in bcf_files],
-              'run_info': dxpy.dxlink(generate_linked_dx_file(split_info_path)),
-              'skipped_sites': dxpy.dxlink(generate_linked_dx_file(skipped_sites_path))}
+    files_to_output = {'output_vcfs': bcf_files,
+                       'run_info': split_info_path,
+                       'skipped_sites': skipped_sites_path}
+
+    exporter = ExportFileHandler()
+    output = exporter.export_files(files_to_output)
 
     return output
 
