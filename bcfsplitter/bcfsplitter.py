@@ -466,12 +466,10 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_na
     split_info_path, skipped_sites_path = write_information_files(output_name, n_vcfs, infos, skipped_sites)
 
     # Set output
-    files_to_output = {'output_vcfs': bcf_files,
-                       'run_info': split_info_path,
-                       'skipped_sites': skipped_sites_path}
-
     exporter = ExportFileHandler()
-    output = exporter.export_files(files_to_output)
+    output = {'output_vcfs': exporter.export_files(bcf_files),
+              'run_info': exporter.export_files(split_info_path),
+              'skipped_sites': exporter.export_files(skipped_sites_path)}
 
     return output
 
