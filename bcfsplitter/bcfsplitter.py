@@ -63,7 +63,7 @@ def generate_site_tsv(vcf_file: Path, sites_suffix: str, cmd_exec: CommandExecut
     sites_file = replace_multi_suffix(vcf_file, sites_suffix)
 
     cmd = f'bcftools query -f "%CHROM\\t%POS\\t%REF\\t%ALT\\t%AC\\n" ' \
-          f'-o /test/{sites_file.name} /test/{vcf_file.name}'
+          f'-o {sites_file} {vcf_file}'
     cmd_exec.run_cmd_on_docker(cmd)
 
     return sites_file
@@ -86,7 +86,8 @@ def download_vcf(input_vcf: str, cmd_exec: CommandExecutor = CMD_EXEC) -> Tuple[
     # if we are not on DNA Nexus we need to create the index
     else:
         vcfpath_index = vcfpath.with_suffix('.tbi')
-        cmd = f'bcftools index -t /test/{vcfpath.name}'
+        cmd = f'bcftools index -t -f {vcfpath}'
+        print(cmd)
         cmd_exec.run_cmd_on_docker(cmd)
 
     # Check the file is a vcf.gz
@@ -95,7 +96,7 @@ def download_vcf(input_vcf: str, cmd_exec: CommandExecutor = CMD_EXEC) -> Tuple[
 
     # Check the file is a vcf index
     if not vcfpath_index.name.endswith('.vcf.tbi' or vcfpath_index.name.endswith('.vcf.gz.tbi')):
-        raise ValueError(f"File {vcfpath_index.name} is not a tbi file!")
+        raise ValueError(f"File {vcfpath_index} is not a tbi file!")
 
     # Get the size of the VCF file for logging purposes:
     vcf_size = vcfpath.stat().st_size
@@ -190,10 +191,10 @@ def normalise_and_left_correct(vcf_file: Path, site_list: Path, reference_fasta:
     """
 
     out_bcf = replace_multi_suffix(vcf_file, '.norm.bcf')
-    cmd = f'bcftools norm --threads 8 -w 100 -Ob -m - -f /test/{reference_fasta.name} ' \
-          f'-T /test/{site_list.name} ' \
+    cmd = f'bcftools norm --threads 8 -w 100 -Ob -m - -f {reference_fasta} ' \
+          f'-T {site_list} ' \
           f'--old-rec-tag MA ' \
-          f'-o /test/{out_bcf.name} /test/{vcf_file.name}'
+          f'-o {out_bcf} {vcf_file}'
     cmd_exec.run_cmd_on_docker(cmd)
 
     return out_bcf
@@ -295,9 +296,9 @@ def split_bcfs(vcf_file: Path, file_chunk_names: List[Path], cmd_exec: CommandEx
     bcf_files = []
     for file_chunk in file_chunk_names:
         out_bcf = file_chunk.with_suffix(f'{file_chunk.suffix}.bcf')
-        cmd = f'bcftools view --threads 8 -e "alt==\'*\'" -T /test/{file_chunk.name} ' \
-              f'-Ob -o /test/{out_bcf.name} ' \
-              f'/test/{vcf_file.name}'
+        cmd = f'bcftools view --threads 8 -e "alt==\'*\'" -T {file_chunk} ' \
+              f'-Ob -o {out_bcf} ' \
+              f'{vcf_file}'
         cmd_exec.run_cmd_on_docker(cmd)
         bcf_files.append(out_bcf)
 
@@ -333,7 +334,7 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int,
                                                                                                   alt_allele_threshold)
 
     # Collate information about this file
-    log_info = {'vcf': vcf_path.name, 'dxid': input_vcf, 'n_sites': n_orig_lines,
+    log_info = {'vcf': vcf_path, 'dxid': input_vcf, 'n_sites': n_orig_lines,
                 'n_final_sites': n_norm_filtered_lines, 'vcf_size': vcf_size}
 
     # Some WGS-based vcfs are meant to have 0 sites, and we want to capture that here, so we have a full accounting
