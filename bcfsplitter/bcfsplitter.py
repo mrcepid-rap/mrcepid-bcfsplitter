@@ -433,7 +433,6 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_na
 
     # Use thread utility to multi-thread this process:
     thread_utility = ThreadUtility(thread_factor=8,
-                                   error_message='A splitting thread failed',
                                    incrementor=5)
 
     # And launch individual jobs
