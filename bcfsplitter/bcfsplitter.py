@@ -8,15 +8,14 @@
 #   http://autodoc.dnanexus.com/bindings/python/current/
 
 import csv
-import dxpy
 import logging
-
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
+import dxpy
 from general_utilities.association_resources import replace_multi_suffix, find_index
+from general_utilities.import_utils.file_handlers.export_file_handler import ExportFileHandler
 from general_utilities.import_utils.file_handlers.input_file_handler import InputFileHandler, FileType
-from general_utilities.import_utils.file_handlers.dnanexus_utilities import generate_linked_dx_file
 from general_utilities.job_management.command_executor import build_default_command_executor, CommandExecutor
 from general_utilities.job_management.thread_utility import ThreadUtility
 from general_utilities.mrc_logger import MRCLogger
@@ -25,7 +24,8 @@ LOGGER = MRCLogger().get_logger()
 CMD_EXEC = build_default_command_executor()
 
 
-def ingest_human_reference(human_reference: dict, human_reference_index: dict, cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
+def ingest_human_reference(human_reference: dict, human_reference_index: dict,
+                           cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
     """Download human reference files – default dxIDs are the location of the GRCh38 reference file on AWS London
 
     :param human_reference: DXLink to the human reference file (must be a .fa.gz)
@@ -63,7 +63,7 @@ def generate_site_tsv(vcf_file: Path, sites_suffix: str, cmd_exec: CommandExecut
     sites_file = replace_multi_suffix(vcf_file, sites_suffix)
 
     cmd = f'bcftools query -f "%CHROM\\t%POS\\t%REF\\t%ALT\\t%AC\\n" ' \
-          f'-o /test/{sites_file.name} /test/{vcf_file.name}'
+          f'-o {sites_file} {vcf_file}'
     cmd_exec.run_cmd_on_docker(cmd)
 
     return sites_file
@@ -86,7 +86,7 @@ def download_vcf(input_vcf: str, cmd_exec: CommandExecutor = CMD_EXEC) -> Tuple[
     # if we are not on DNA Nexus we need to create the index
     else:
         vcfpath_index = vcfpath.with_suffix('.tbi')
-        cmd = f'bcftools index -t /test/{vcfpath.name}'
+        cmd = f'bcftools index -t -f {vcfpath}'
         cmd_exec.run_cmd_on_docker(cmd)
 
     # Check the file is a vcf.gz
@@ -95,7 +95,7 @@ def download_vcf(input_vcf: str, cmd_exec: CommandExecutor = CMD_EXEC) -> Tuple[
 
     # Check the file is a vcf index
     if not vcfpath_index.name.endswith('.vcf.tbi' or vcfpath_index.name.endswith('.vcf.gz.tbi')):
-        raise ValueError(f"File {vcfpath_index.name} is not a tbi file!")
+        raise ValueError(f"File {vcfpath_index} is not a tbi file!")
 
     # Get the size of the VCF file for logging purposes:
     vcf_size = vcfpath.stat().st_size
@@ -170,7 +170,8 @@ def count_variant_list_and_filter(sites_file: Path, alt_allele_threshold: int) -
         return filtered_sites_file, failed_sites, n_vcf_lines, n_vcf_alternates
 
 
-def normalise_and_left_correct(vcf_file: Path, site_list: Path, reference_fasta: Path, cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
+def normalise_and_left_correct(vcf_file: Path, site_list: Path, reference_fasta: Path,
+                               cmd_exec: CommandExecutor = CMD_EXEC) -> Path:
     """A wrapper for BCFtools norm to left-normalise and split all variants
 
     Generate a normalised bcf file for all downstream processing using `bcftools norm`:
@@ -189,10 +190,10 @@ def normalise_and_left_correct(vcf_file: Path, site_list: Path, reference_fasta:
     """
 
     out_bcf = replace_multi_suffix(vcf_file, '.norm.bcf')
-    cmd = f'bcftools norm --threads 8 -w 100 -Ob -m - -f /test/{reference_fasta.name} ' \
-          f'-T /test/{site_list.name} ' \
+    cmd = f'bcftools norm --threads 8 -w 100 -Ob -m - -f {reference_fasta} ' \
+          f'-T {site_list} ' \
           f'--old-rec-tag MA ' \
-          f'-o /test/{out_bcf.name} /test/{vcf_file.name}'
+          f'-o {out_bcf} {vcf_file}'
     cmd_exec.run_cmd_on_docker(cmd)
 
     return out_bcf
@@ -294,9 +295,9 @@ def split_bcfs(vcf_file: Path, file_chunk_names: List[Path], cmd_exec: CommandEx
     bcf_files = []
     for file_chunk in file_chunk_names:
         out_bcf = file_chunk.with_suffix(f'{file_chunk.suffix}.bcf')
-        cmd = f'bcftools view --threads 8 -e "alt==\'*\'" -T /test/{file_chunk.name} ' \
-              f'-Ob -o /test/{out_bcf.name} ' \
-              f'/test/{vcf_file.name}'
+        cmd = f'bcftools view --threads 8 -e "alt==\'*\'" -T {file_chunk} ' \
+              f'-Ob -o {out_bcf} ' \
+              f'{vcf_file}'
         cmd_exec.run_cmd_on_docker(cmd)
         bcf_files.append(out_bcf)
 
@@ -332,7 +333,7 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int,
                                                                                                   alt_allele_threshold)
 
     # Collate information about this file
-    log_info = {'vcf': vcf_path.name, 'dxid': input_vcf, 'n_sites': n_orig_lines,
+    log_info = {'vcf': vcf_path, 'dxid': input_vcf, 'n_sites': n_orig_lines,
                 'n_final_sites': n_norm_filtered_lines, 'vcf_size': vcf_size}
 
     # Some WGS-based vcfs are meant to have 0 sites, and we want to capture that here, so we have a full accounting
@@ -353,14 +354,16 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int,
 
         # 6. And actually split the files into chunks:
         split_files = split_bcfs(norm_bcf, file_chunk_paths)
-        final_files = [generate_linked_dx_file(file) for file in split_files]
+
+        # export the split files to DNANexus
+        exporter = ExportFileHandler()
+        final_files = exporter.export_files(split_files)
 
     return final_files, log_info, failed_sites
 
 
 def write_information_files(output_name: Optional[str], n_vcfs: int, infos: List[Dict],
                             skipped_sites: List[List[Dict]], output_dir: Path = Path('./')) -> Tuple[Path, Path]:
-
     output_name = f'.{output_name}.' if output_name else '.'
     split_info_path = output_dir / f'vcf_info{output_name}tsv'
     skipped_sites_path = output_dir / f'skipped_sites{output_name}tsv'
@@ -429,7 +432,6 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_na
 
     # Use thread utility to multi-thread this process:
     thread_utility = ThreadUtility(thread_factor=8,
-                                   error_message='A splitting thread failed',
                                    incrementor=5)
 
     # And launch individual jobs
@@ -463,9 +465,10 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_na
     split_info_path, skipped_sites_path = write_information_files(output_name, n_vcfs, infos, skipped_sites)
 
     # Set output
-    output = {'output_vcfs': [dxpy.dxlink(item) for item in bcf_files],
-              'run_info': dxpy.dxlink(generate_linked_dx_file(split_info_path)),
-              'skipped_sites': dxpy.dxlink(generate_linked_dx_file(skipped_sites_path))}
+    exporter = ExportFileHandler()
+    output = {'output_vcfs': exporter.export_files(bcf_files),
+              'run_info': exporter.export_files(split_info_path),
+              'skipped_sites': exporter.export_files(skipped_sites_path)}
 
     return output
 

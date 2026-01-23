@@ -12,3 +12,6 @@ test/reference.fasta
 test/reference.fasta.fai
 test/test_input1*
 test/test_input2*
+.DS_Store
+test/.DS_Store
+**/.DS_Store
