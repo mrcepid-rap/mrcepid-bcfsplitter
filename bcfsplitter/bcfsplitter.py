@@ -87,7 +87,6 @@ def download_vcf(input_vcf: str, cmd_exec: CommandExecutor = CMD_EXEC) -> Tuple[
     else:
         vcfpath_index = vcfpath.with_suffix('.tbi')
         cmd = f'bcftools index -t -f {vcfpath}'
-        print(cmd)
         cmd_exec.run_cmd_on_docker(cmd)
 
     # Check the file is a vcf.gz
