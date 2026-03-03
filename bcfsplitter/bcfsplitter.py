@@ -447,11 +447,15 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_na
             # Get the input VCF and index
             input_vcf = line.rstrip().split()[0]
 
-            thread_utility.launch_job(process_vcf,
-                                      input_vcf=input_vcf,
-                                      chunk_size=chunk_size,
-                                      alt_allele_threshold=alt_allele_threshold,
-                                      reference_fasta=reference)
+            thread_utility.launch_job(function=process_vcf,
+                                      inputs={
+                                          'input_vcf': input_vcf,
+                                          'chunk_size': chunk_size,
+                                          'alt_allele_threshold': alt_allele_threshold,
+                                          'reference_fasta': reference
+                                      },
+                                      outputs=['final_files', 'log_info', 'failed_sites']
+                                      )
 
         thread_utility.submit_and_monitor()
 
@@ -459,7 +463,9 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_na
     infos = []
     skipped_sites = []
     for result in thread_utility:
-        files, info, skipped = result
+        files = result['final_files']
+        info = result['log_info']
+        skipped = result['failed_sites']
         bcf_files.extend(files)
         infos.append(info)
         skipped_sites.append(skipped)
