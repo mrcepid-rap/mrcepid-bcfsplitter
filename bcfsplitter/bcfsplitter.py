@@ -66,6 +66,10 @@ def generate_site_tsv(vcf_file: Path, sites_suffix: str, cmd_exec: CommandExecut
           f'-o {sites_file} {vcf_file}'
     cmd_exec.run_cmd_on_docker(cmd)
 
+    # SANITY CHECK:
+    if not sites_file.exists() or sites_file.stat().st_size == 0:
+        raise RuntimeError(f"bcftools silently failed! Docker could not find {vcf_file}")
+
     return sites_file
 
 
