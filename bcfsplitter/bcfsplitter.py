@@ -333,7 +333,7 @@ def process_vcf(input_vcf: str, chunk_size: int, alt_allele_threshold: int,
                                                                                                   alt_allele_threshold)
 
     # Collate information about this file
-    log_info = {'vcf': vcf_path, 'dxid': input_vcf, 'n_sites': n_orig_lines,
+    log_info = {'vcf': vcf_path.name, 'dxid': input_vcf, 'n_sites': n_orig_lines,
                 'n_final_sites': n_norm_filtered_lines, 'vcf_size': vcf_size}
 
     # Some WGS-based vcfs are meant to have 0 sites, and we want to capture that here, so we have a full accounting
@@ -466,9 +466,9 @@ def main(input_vcfs: dict, chunk_size: int, alt_allele_threshold: int, output_na
 
     # Set output
     exporter = ExportFileHandler()
-    output = {'output_vcfs': exporter.export_files(bcf_files),
-              'run_info': exporter.export_files(split_info_path),
-              'skipped_sites': exporter.export_files(skipped_sites_path)}
+    output = {'output_vcfs': bcf_files,
+              'run_info': exporter.export_files([split_info_path])[0],
+              'skipped_sites': exporter.export_files([skipped_sites_path])[0]}
 
     return output
 
